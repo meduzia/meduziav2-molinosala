@@ -1,0 +1,103 @@
+╔═══════════════════════════════════════════════════════════════════════════╗
+║                     REFERENCIA RÁPIDA DE COSTOS                          ║
+║                         Campañas UGC con OpenAI                          ║
+╚═══════════════════════════════════════════════════════════════════════════╝
+
+💰 COSTOS POR CONFIGURACIÓN:
+
+┏━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━┳━━━━━━━┳━━━━━━━━━┳━━━━━━━━┓
+┃ Opción                 ┃ 1 Camp   ┃ 10    ┃ 100   ┃ 1,000   ┃ 300/mes┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━╇━━━━━━━╇━━━━━━━━━╇━━━━━━━━┩
+│ Mínima (RA)            │ $0.007   │ $0.07 │ $0.74 │ $7.40   │ $2.22  │
+│ Estándar (RAI) ⭐      │ $0.016   │ $0.16 │ $1.59 │ $15.90  │ $4.77  │
+│ Videos (RAS)           │ $0.016   │ $0.16 │ $1.59 │ $15.90  │ $4.77  │
+│ Premium (RASI)         │ $0.024   │ $0.24 │ $2.44 │ $24.40  │ $7.32  │
+│ Completa (RASIV)       │ $0.036   │ $0.36 │ $3.59 │ $35.90  │ $10.77 │
+└────────────────────────┴──────────┴───────┴───────┴─────────┴────────┘
+
+Leyenda: R=Research, A=Angles, S=Scriptwriting, I=Image Generation, V=Variations
+
+
+🎯 RECOMENDACIÓN:
+   ⭐ Opción ESTÁNDAR = $0.0159/campaña = Mejor balance
+
+
+📊 DESGLOSE DE LA OPCIÓN ESTÁNDAR:
+
+   Research:       $0.0022 (13.8%)  │ 2,000 tokens
+   Angles:         $0.0052 (32.7%)  │ 4,800 tokens
+   Image Gen:      $0.0085 (53.5%)  │ 8,000 tokens
+   ────────────────────────────────
+   TOTAL:          $0.0159 (100%)   │ 14,800 tokens
+
+
+🏢 PRESUPUESTO RECOMENDADO POR TIPO:
+
+   Startup              → $5-10/mes      (Opción Mínima)
+   PME Pequeña          → $20-50/mes     (Opción Estándar)
+   PME Grande           → $100-200/mes   (Opción Premium)
+   Agencia              → $500+/mes      (Opción Completa)
+
+
+💻 COMANDOS ÚTILES:
+
+   Ver costo de configuración:
+   $ curl "http://localhost:3000/api/campaigns/cost-estimate?research=true&angles=true"
+
+   Ver desglose formateado:
+   $ curl -s "http://localhost:3000/api/campaigns/cost-estimate?..." | jq '.formatted'
+
+   Ver reporte histórico:
+   $ curl "http://localhost:3000/api/analytics/cost-report"
+
+   Crear campaña y ver costo:
+   $ curl -X POST http://localhost:3000/api/campaigns/create \
+     -H 'Content-Type: application/json' \
+     -d '{...}' | jq '.estimatedCost'
+
+
+⚡ TOKENS POR AGENTE:
+
+   Research Agent:       2,000 tokens  → $0.0022
+   Angles Agent:         4,800 tokens  → $0.0052
+   Scriptwriting Agent:  8,000 tokens  → $0.0085
+   Image Generator:      8,000 tokens  → $0.0085
+   Variations Agent:    11,000 tokens  → $0.0115
+
+
+🎛️ EN LA UI:
+
+   1. Abre: /campaigns/create
+   2. Paso 2: Marcar/desmarcar agentes
+   3. Ve el costo actualizar en tiempo real
+   4. Crea la campaña
+
+
+📖 DOCUMENTACIÓN:
+
+   - COST_ANALYSIS.md       → Análisis detallado de costos
+   - BUDGET_GUIDE.md        → Guía completa de presupuesto
+   - QUICK_COST_REFERENCE.txt → Este archivo (referencia rápida)
+   - app/lib/cost-calculator.ts → Lógica de cálculo
+
+
+❓ PREGUNTAS COMUNES:
+
+   P: ¿Cuál es el más barato?
+   R: Mínima ($0.0074), pero Estándar es mejor ROI ($0.0159)
+
+   P: ¿Se puede reutilizar contenido?
+   R: Sí, los ángulos se reutilizan sin costo adicional
+
+   P: ¿Incluye videos/imágenes generadas?
+   R: No, solo los PROMPTS. Luego usas Sora, DALL-E, etc.
+
+   P: ¿Costo por video/imagen AI?
+   R: ~$0.10-1.00 video (Sora), ~$0.10-0.40 imagen (DALL-E)
+
+   P: ¿Cómo actualizo los precios si OpenAI los cambia?
+   R: Edita app/lib/cost-calculator.ts línea ~18-21
+
+
+═══════════════════════════════════════════════════════════════════════════
+Última actualización: 2025-11-16

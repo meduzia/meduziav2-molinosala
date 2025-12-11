@@ -1,0 +1,491 @@
+{
+  "name": "creative_image_generate",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "creative-image-generate",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [
+        240,
+        300
+      ],
+      "webhookId": "creative-image-generate"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Validar y preparar datos del webhook\nconst body = $input.first().json.body || $input.first().json;\n\n// Validar campos requeridos\nconst requiredFields = ['org_id', 'brief', 'base_angle'];\nconst missingFields = requiredFields.filter(field => !body[field]);\n\nif (missingFields.length > 0) {\n  throw new Error(`Campos requeridos faltantes: ${missingFields.join(', ')}`);\n}\n\n// Preparar datos\nconst data = {\n  org_id: body.org_id,\n  brief: body.brief,\n  base_angle: body.base_angle,\n  destination: body.destination || null,\n  count: parseInt(body.count) || 1,\n  brand_color: process.env.BRAND_PRIMARY_COLOR || '#000000'\n};\n\n// Validar count\nif (data.count < 1 || data.count > 10) {\n  data.count = 1;\n}\n\nreturn [{\n  json: data\n}];"
+      },
+      "id": "validate-input",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        460,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "prompt-base",
+              "name": "base_prompt",
+              "value": "=Generate a high-quality marketing creative image for: {{ $json.brief }}\n\nCreative Angle: {{ $json.base_angle }}\n{{ $json.destination ? `Destination: ${$json.destination}` : '' }}\n\nStyle Guidelines:\n- Professional, modern design\n- Brand color: {{ $json.brand_color }}\n- Eye-catching and engaging\n- Optimized for social media advertising\n- High resolution, clear details\n\nRequirements:\n- Include subtle brand color accents ({{ $json.brand_color }})\n- Professional photography or illustration style\n- Clean composition with focal point\n- Suitable for Meta/Facebook ads",
+              "type": "string"
+            },
+            {
+              "id": "prompt-enhanced",
+              "name": "enhanced_prompt",
+              "value": "={{ $json.base_prompt }}\n\nAdditional Context:\n- Organization ID: {{ $json.org_id }}\n- Target audience: Marketing professionals\n- Platform: Meta Ads (Facebook/Instagram)\n- Format: Square or 4:5 aspect ratio preferred",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "prompt-builder",
+      "name": "Prompt Builder",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.3,
+      "position": [
+        680,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Preparar requests para generar múltiples imágenes\nconst item = $input.first().json;\nconst count = item.count || 1;\nconst requests = [];\n\nfor (let i = 0; i < count; i++) {\n  requests.push({\n    json: {\n      ...item,\n      prompt: item.enhanced_prompt,\n      image_index: i + 1,\n      total_images: count\n    }\n  });\n}\n\nreturn requests;"
+      },
+      "id": "split-for-generation",
+      "name": "Split for Generation",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        900,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.NANO_BANANA_API_URL || 'https://api.nanobanana.ai/v1/images/generate' }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.NANO_BANANA_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": []
+        },
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"prompt\": \"{{ $json.prompt }}\",\n  \"model\": \"{{ $env.NANO_BANANA_MODEL || 'flux' }}\",\n  \"width\": 1024,\n  \"height\": 1024,\n  \"steps\": 30,\n  \"guidance_scale\": 7.5,\n  \"num_images\": 1\n}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "nano-banana-generate",
+      "name": "Nano Banana Generate",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1120,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Procesar respuesta de Nano Banana y extraer URLs de imágenes\nconst item = $input.first().json;\nconst response = item;\n\n// Nano Banana puede devolver diferentes formatos de respuesta\nlet imageUrl = null;\nlet imageId = null;\n\nif (response.image_url) {\n  imageUrl = response.image_url;\n} else if (response.data && response.data[0] && response.data[0].url) {\n  imageUrl = response.data[0].url;\n} else if (response.images && response.images[0]) {\n  imageUrl = response.images[0].url || response.images[0];\n} else if (response.url) {\n  imageUrl = response.url;\n}\n\nif (response.id) {\n  imageId = response.id;\n} else if (response.data && response.data[0] && response.data[0].id) {\n  imageId = response.data[0].id;\n}\n\nif (!imageUrl) {\n  throw new Error('No se pudo obtener URL de imagen de la respuesta de Nano Banana');\n}\n\n// Combinar con datos originales\nconst originalData = $('Split for Generation').item.json;\n\nreturn [{\n  json: {\n    ...originalData,\n    generated_image_url: imageUrl,\n    generated_image_id: imageId,\n    generation_response: response\n  }\n}];"
+      },
+      "id": "extract-image-url",
+      "name": "Extract Image URL",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1340,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.generated_image_url }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file"
+            }
+          }
+        }
+      },
+      "id": "download-image",
+      "name": "Download Image",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1560,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-branding",
+              "leftValue": "={{ $env.ENABLE_BRANDING_OVERLAY || 'false' }}",
+              "rightValue": "true",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-branding",
+      "name": "Check Branding",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1780,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Agregar overlay de branding a la imagen\n// Nota: Este es un ejemplo básico. Para producción, considera usar una librería de procesamiento de imágenes\n// como Sharp, Canvas, o un servicio externo como Cloudinary\n\nconst item = $input.first().json;\nconst imageBuffer = item.data;\n\n// Aquí deberías usar una librería de procesamiento de imágenes\n// Por ahora, retornamos el buffer original con metadata\n// En producción, aquí agregarías el overlay usando el brand_color\n\nconst brandColor = item.brand_color || process.env.BRAND_PRIMARY_COLOR || '#000000';\n\nreturn [{\n  json: {\n    ...item,\n    has_branding_overlay: true,\n    branding_color: brandColor,\n    processed_image: imageBuffer\n  },\n  binary: {\n    data: imageBuffer\n  }\n}];"
+      },
+      "id": "add-branding-overlay",
+      "name": "Add Branding Overlay",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2000,
+        200
+      ],
+      "notes": "Nota: Implementación básica. Para producción, integra Sharp o Canvas para procesar imágenes reales."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.NEXT_PUBLIC_SUPABASE_URL || $env.SUPABASE_URL }}/storage/v1/object/retrofish-assets/{{ $('Extract Image URL').item.json.org_id }}/{{ $now.toFormat('yyyy-MM-dd') }}/{{ $('Extract Image URL').item.json.image_index || 1 }}-{{ $('Extract Image URL').item.json.base_angle }}-{{ $now.toFormat('HHmmss') }}.png",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "image/png"
+            },
+            {
+              "name": "x-upsert",
+              "value": "true"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyContentType": "binaryData",
+        "options": {}
+      },
+      "id": "upload-supabase-storage",
+      "name": "Upload to Supabase Storage",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2220,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extraer URL pública de la respuesta de Supabase Storage\nconst item = $input.first().json;\nconst originalData = $('Extract Image URL').item.json;\n\n// Construir URL pública desde el path de la request\nconst supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL || '';\nconst urlParts = item.request?.url?.split('/retrofish-assets/');\n\nlet fileUrl = null;\n\nif (item.Key) {\n  fileUrl = `${supabaseUrl}/storage/v1/object/public/retrofish-assets/${item.Key}`;\n} else if (item.path) {\n  fileUrl = `${supabaseUrl}/storage/v1/object/public/retrofish-assets/${item.path}`;\n} else if (item.url || item.publicUrl) {\n  fileUrl = item.url || item.publicUrl;\n} else if (urlParts && urlParts[1]) {\n  fileUrl = `${supabaseUrl}/storage/v1/object/public/retrofish-assets/${urlParts[1]}`;\n} else {\n  // Construir desde datos originales\n  const path = `${originalData.org_id}/${new Date().toISOString().split('T')[0]}/${originalData.image_index || 1}-${originalData.base_angle}-${new Date().toISOString().split('T')[1].split('.')[0].replace(/:/g, '')}.png`;\n  fileUrl = `${supabaseUrl}/storage/v1/object/public/retrofish-assets/${path}`;\n}\n\nif (!fileUrl) {\n  throw new Error('No se pudo obtener URL pública del archivo subido');\n}\n\nreturn [{\n  json: {\n    ...originalData,\n    file_url: fileUrl,\n    storage_path: item.Key || item.path || urlParts?.[1] || 'unknown',\n    uploaded_at: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "extract-storage-url",
+      "name": "Extract Storage URL",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2440,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "table": "creatives",
+        "columns": "name,file_url,file_type,angle,destination,format,status,status_history",
+        "options": {}
+      },
+      "id": "insert-creative",
+      "name": "Insert Creative",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        2660,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "supabase-postgres",
+          "name": "Supabase Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Preparar datos para insertar en creatives después de obtener la URL de storage\nconst item = $input.first().json;\n\n// Construir nombre del creative\nconst name = `${item.base_angle}${item.destination ? ` - ${item.destination}` : ''} - ${item.brief.substring(0, 50)}`;\n\n// Preparar status_history inicial\nconst statusHistory = [{\n  status: 'draft',\n  timestamp: new Date().toISOString(),\n  user: 'system',\n  note: 'Creative generado automáticamente'\n}];\n\nreturn [{\n  json: {\n    name: name,\n    file_url: item.file_url,\n    file_type: 'image',\n    angle: item.base_angle,\n    destination: item.destination || null,\n    format: 'image',\n    status: 'draft',\n    status_history: JSON.stringify(statusHistory),\n    // Mantener datos adicionales para el siguiente nodo\n    org_id: item.org_id,\n    image_index: item.image_index,\n    generated_image_url: item.generated_image_url\n  }\n}];"
+      },
+      "id": "prepare-creative-data",
+      "name": "Prepare Creative Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2440,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Recopilar todos los creative_ids generados\nconst items = $input.all();\nconst creativeIds = [];\n\nfor (const item of items) {\n  // El resultado de Postgres insert puede venir en diferentes formatos\n  if (item.json.id) {\n    creativeIds.push(item.json.id);\n  } else if (item.json[0] && item.json[0].id) {\n    creativeIds.push(item.json[0].id);\n  } else if (Array.isArray(item.json) && item.json.length > 0) {\n    item.json.forEach(row => {\n      if (row.id) creativeIds.push(row.id);\n    });\n  }\n}\n\n// Obtener datos originales del webhook\nconst originalData = $('Validate Input').item.json;\n\nreturn [{\n  json: {\n    success: true,\n    org_id: originalData.org_id,\n    creative_ids: creativeIds,\n    count: creativeIds.length,\n    generated_at: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "collect-creative-ids",
+      "name": "Collect Creative IDs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2880,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      },
+      "id": "return-response",
+      "name": "Return Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        3100,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "Prompt Builder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prompt Builder": {
+      "main": [
+        [
+          {
+            "node": "Split for Generation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split for Generation": {
+      "main": [
+        [
+          {
+            "node": "Nano Banana Generate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Nano Banana Generate": {
+      "main": [
+        [
+          {
+            "node": "Extract Image URL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Image URL": {
+      "main": [
+        [
+          {
+            "node": "Download Image",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download Image": {
+      "main": [
+        [
+          {
+            "node": "Check Branding",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Branding": {
+      "main": [
+        [
+          {
+            "node": "Add Branding Overlay",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Upload to Supabase Storage",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Add Branding Overlay": {
+      "main": [
+        [
+          {
+            "node": "Upload to Supabase Storage",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upload to Supabase Storage": {
+      "main": [
+        [
+          {
+            "node": "Extract Storage URL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Storage URL": {
+      "main": [
+        [
+          {
+            "node": "Prepare Creative Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Creative Data": {
+      "main": [
+        [
+          {
+            "node": "Insert Creative",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert Creative": {
+      "main": [
+        [
+          {
+            "node": "Collect Creative IDs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Collect Creative IDs": {
+      "main": [
+        [
+          {
+            "node": "Return Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Return Response": {
+      "main": [
+        [
+          {
+            "node": "Webhook Trigger",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 0,
+  "updatedAt": "2024-01-01T00:00:00.000Z",
+  "versionId": "1"
+}
+

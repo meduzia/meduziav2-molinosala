@@ -1,0 +1,394 @@
+{
+  "name": "Weekly Report - Summary",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 8 * * 1"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "cron-trigger",
+      "name": "Cron Trigger (Mon 8 AM)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        240,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Calcular semana ISO anterior\nconst today = new Date();\nconst lastWeek = new Date(today);\nlastWeek.setDate(lastWeek.getDate() - 7);\n\nfunction getWeekISO(dateStr) {\n  if (!dateStr) return null;\n  const date = new Date(dateStr + 'T00:00:00Z');\n  const year = date.getUTCFullYear();\n  const jan4 = new Date(Date.UTC(year, 0, 4));\n  const jan4Day = jan4.getUTCDay() || 7;\n  const firstMonday = new Date(Date.UTC(year, 0, 4 - jan4Day + 1));\n  const daysDiff = Math.floor((date - firstMonday) / 86400000);\n  let weekNumber = Math.floor(daysDiff / 7) + 1;\n  let isoYear = year;\n  \n  if (daysDiff < 0) {\n    const prevYear = year - 1;\n    const prevJan4 = new Date(Date.UTC(prevYear, 0, 4));\n    const prevJan4Day = prevJan4.getUTCDay() || 7;\n    const prevFirstMonday = new Date(Date.UTC(prevYear, 0, 4 - prevJan4Day + 1));\n    const prevDaysDiff = Math.floor((date - prevFirstMonday) / 86400000);\n    weekNumber = Math.floor(prevDaysDiff / 7) + 1;\n    isoYear = prevYear;\n  } else if (weekNumber === 53) {\n    const nextJan4 = new Date(Date.UTC(year + 1, 0, 4));\n    const nextJan4Day = nextJan4.getUTCDay() || 7;\n    const nextFirstMonday = new Date(Date.UTC(year + 1, 0, 4 - nextJan4Day + 1));\n    const daysUntilNextYear = Math.floor((nextFirstMonday - date) / 86400000);\n    if (daysUntilNextYear < 7) {\n      isoYear = year + 1;\n      weekNumber = 1;\n    }\n  }\n  \n  return `${isoYear}-W${String(weekNumber).padStart(2, '0')}`;\n}\n\nconst lastWeekISO = getWeekISO(lastWeek.toISOString().split('T')[0]);\nconst sevenDaysAgo = new Date();\nsevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);\n\nreturn [{\n  json: {\n    week_iso: lastWeekISO,\n    date_from: sevenDaysAgo.toISOString().split('T')[0],\n    date_to: today.toISOString().split('T')[0]\n  }\n}];"
+      },
+      "id": "prepare-dates",
+      "name": "Prepare Dates",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        460,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "=SELECT \n  ar.ad_id,\n  ar.ad_name,\n  ar.headline,\n  ar.ctr,\n  ar.roas,\n  ar.cpa,\n  ar.impressions,\n  ar.clicks,\n  ar.spend,\n  ar.ranking_position\nFROM ad_rankings ar\nWHERE ar.week_iso = '{{ $json.week_iso }}'\n  AND ar.ranking_type = 'top10'\nORDER BY ar.ranking_position\nLIMIT 10",
+        "options": {}
+      },
+      "id": "query-top10",
+      "name": "Query Top 10",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        680,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "supabase-postgres",
+          "name": "Supabase Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "=SELECT \n  ar.ad_id,\n  ar.ad_name,\n  ar.headline,\n  ar.ctr,\n  ar.roas,\n  ar.cpa,\n  ar.impressions,\n  ar.clicks,\n  ar.spend,\n  ar.ranking_position\nFROM ad_rankings ar\nWHERE ar.week_iso = '{{ $json.week_iso }}'\n  AND ar.ranking_type = 'bottom10'\nORDER BY ar.ranking_position\nLIMIT 10",
+        "options": {}
+      },
+      "id": "query-bottom10",
+      "name": "Query Bottom 10",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        680,
+        500
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "supabase-postgres",
+          "name": "Supabase Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "=SELECT \n  id,\n  concept_name,\n  creative_theme,\n  core_message,\n  status,\n  created_at\nFROM briefs\nWHERE created_at >= '{{ $json.date_from }}'\n  AND created_at <= '{{ $json.date_to }}'\nORDER BY created_at DESC\nLIMIT 20",
+        "options": {}
+      },
+      "id": "query-briefs",
+      "name": "Query New Briefs",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        680,
+        700
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "supabase-postgres",
+          "name": "Supabase Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "=SELECT \n  COUNT(DISTINCT m.ad_id) as total_ads,\n  SUM(m.impressions) as total_impressions,\n  SUM(m.clicks) as total_clicks,\n  SUM(m.spend) as total_spend,\n  AVG(m.ctr) as avg_ctr,\n  AVG(m.roas) as avg_roas,\n  AVG(m.cpa) as avg_cpa\nFROM metrics_daily m\nWHERE m.date >= '{{ $json.date_from }}'\n  AND m.date <= '{{ $json.date_to }}'",
+        "options": {}
+      },
+      "id": "query-kpis",
+      "name": "Query KPIs",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        680,
+        600
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "supabase-postgres",
+          "name": "Supabase Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Combinar todos los datos y preparar resumen\nconst weekData = $('Prepare Dates').item.json;\nconst top10Data = $('Query Top 10').all();\nconst bottom10Data = $('Query Bottom 10').all();\nconst briefsData = $('Query New Briefs').all();\nconst kpisData = $('Query KPIs').first().json;\n\nconst top10 = top10Data.map(item => item.json);\nconst bottom10 = bottom10Data.map(item => item.json);\nconst briefs = briefsData.map(item => item.json);\n\n// Calcular KPIs\nconst kpis = {\n  total_ads: parseInt(kpisData.total_ads || 0),\n  total_impressions: parseInt(kpisData.total_impressions || 0),\n  total_clicks: parseInt(kpisData.total_clicks || 0),\n  total_spend: parseFloat((kpisData.total_spend || 0).toFixed(2)),\n  avg_ctr: parseFloat((kpisData.avg_ctr || 0).toFixed(2)),\n  avg_roas: parseFloat((kpisData.avg_roas || 0).toFixed(2)),\n  avg_cpa: parseFloat((kpisData.avg_cpa || 0).toFixed(2))\n};\n\n// Calcular totales de top10 y bottom10\nconst top10Totals = {\n  total_impressions: top10.reduce((sum, ad) => sum + parseInt(ad.impressions || 0), 0),\n  total_clicks: top10.reduce((sum, ad) => sum + parseInt(ad.clicks || 0), 0),\n  total_spend: top10.reduce((sum, ad) => sum + parseFloat(ad.spend || 0), 0),\n  avg_ctr: top10.length > 0 ? (top10.reduce((sum, ad) => sum + parseFloat(ad.ctr || 0), 0) / top10.length).toFixed(2) : 0,\n  avg_roas: top10.length > 0 ? (top10.reduce((sum, ad) => sum + parseFloat(ad.roas || 0), 0) / top10.length).toFixed(2) : 0\n};\n\nconst bottom10Totals = {\n  total_impressions: bottom10.reduce((sum, ad) => sum + parseInt(ad.impressions || 0), 0),\n  total_clicks: bottom10.reduce((sum, ad) => sum + parseInt(ad.clicks || 0), 0),\n  total_spend: bottom10.reduce((sum, ad) => sum + parseFloat(ad.spend || 0), 0),\n  avg_ctr: bottom10.length > 0 ? (bottom10.reduce((sum, ad) => sum + parseFloat(ad.ctr || 0), 0) / bottom10.length).toFixed(2) : 0,\n  avg_roas: bottom10.length > 0 ? (bottom10.reduce((sum, ad) => sum + parseFloat(ad.roas || 0), 0) / bottom10.length).toFixed(2) : 0\n};\n\nreturn [{\n  json: {\n    week_iso: weekData.week_iso,\n    date_from: weekData.date_from,\n    date_to: weekData.date_to,\n    kpis: kpis,\n    top10: top10,\n    bottom10: bottom10,\n    top10_totals: top10Totals,\n    bottom10_totals: bottom10Totals,\n    briefs: briefs,\n    report_date: new Date().toISOString().split('T')[0]\n  }\n}];"
+      },
+      "id": "prepare-summary",
+      "name": "Prepare Summary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        900,
+        450
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Formatear mensaje para Slack\nconst data = $input.first().json;\nconst dashboardUrl = process.env.DASHBOARD_URL || 'https://dashboard.retrofish.com';\nconst supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://supabase.com';\n\n// Formatear top10\nconst top10Text = data.top10.length > 0 ? data.top10.map((ad, idx) => {\n  return `${idx + 1}. *${ad.ad_name || ad.headline || 'N/A'}*\n   CTR: ${ad.ctr}% | ROAS: ${ad.roas} | Spend: $${ad.spend}`;\n}).join('\\n') : 'No hay datos disponibles';\n\n// Formatear bottom10\nconst bottom10Text = data.bottom10.length > 0 ? data.bottom10.map((ad, idx) => {\n  return `${idx + 1}. *${ad.ad_name || ad.headline || 'N/A'}*\n   CTR: ${ad.ctr}% | ROAS: ${ad.roas} | Spend: $${ad.spend}`;\n}).join('\\n') : 'No hay datos disponibles';\n\n// Formatear briefs\nconst briefsText = data.briefs.length > 0 ? data.briefs.map(brief => {\n  return `• *${brief.concept_name}* (${brief.status})\n  ${brief.creative_theme}`;\n}).join('\\n') : 'No hay briefs nuevos esta semana';\n\nconst message = `📊 *Reporte Semanal - ${data.week_iso}*\n\n📅 *Período:* ${data.date_from} a ${data.date_to}\n\n🎯 *KPIs Principales:*\n• Total Ads: ${data.kpis.total_ads}\n• Impresiones: ${data.kpis.total_impressions.toLocaleString()}\n• Clicks: ${data.kpis.total_clicks.toLocaleString()}\n• Spend: $${data.kpis.total_spend.toLocaleString()}\n• CTR Promedio: ${data.kpis.avg_ctr}%\n• ROAS Promedio: ${data.kpis.avg_roas}\n• CPA Promedio: $${data.kpis.avg_cpa}\n\n🏆 *Top 10 Ads (Mayor CTR):*\n${top10Text}\n\n📊 *Promedios Top 10:*\n• CTR: ${data.top10_totals.avg_ctr}%\n• ROAS: ${data.top10_totals.avg_roas}\n• Impresiones: ${data.top10_totals.total_impressions.toLocaleString()}\n• Spend: $${data.top10_totals.total_spend.toLocaleString()}\n\n📉 *Bottom 10 Ads (Menor CTR):*\n${bottom10Text}\n\n📊 *Promedios Bottom 10:*\n• CTR: ${data.bottom10_totals.avg_ctr}%\n• ROAS: ${data.bottom10_totals.avg_roas}\n• Impresiones: ${data.bottom10_totals.total_impressions.toLocaleString()}\n• Spend: $${data.bottom10_totals.total_spend.toLocaleString()}\n\n📝 *Briefs Nuevos:*\n${briefsText}\n\n🔗 *Enlaces Rápidos:*\n• <${dashboardUrl}/dashboard|Dashboard Principal>\n• <${dashboardUrl}/ads/rankings|Rankings de Ads>\n• <${dashboardUrl}/creatives/briefs|Briefs Creativos>\n• <${dashboardUrl}/analytics?week=${data.week_iso}|Analytics Semana ${data.week_iso}>\n\n_Generado el ${data.report_date}_`;\n\nreturn [{\n  json: {\n    message: message,\n    week_iso: data.week_iso,\n    ...data\n  }\n}];"
+      },
+      "id": "format-slack-message",
+      "name": "Format Slack Message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        450
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-slack-enabled",
+              "leftValue": "={{ $env.SLACK_ENABLED || 'true' }}",
+              "rightValue": "true",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-slack",
+      "name": "Check Slack",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1340,
+        450
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SLACK_WEBHOOK_URL }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"text\": \"{{ $json.message }}\"\n}",
+        "options": {}
+      },
+      "id": "send-slack-webhook",
+      "name": "Send Slack Webhook",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1560,
+        350
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "email",
+        "operation": "send",
+        "fromEmail": "={{ $env.EMAIL_FROM || 'reports@retrofish.com' }}",
+        "toEmail": "={{ $env.EMAIL_TO || 'team@retrofish.com' }}",
+        "subject": "=📊 Reporte Semanal - {{ $json.week_iso }}",
+        "emailType": "html",
+        "message": "=<pre>{{ $json.message }}</pre>",
+        "options": {}
+      },
+      "id": "send-email",
+      "name": "Send Email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        1560,
+        550
+      ],
+      "credentials": {
+        "smtp": {
+          "id": "smtp-credentials",
+          "name": "SMTP"
+        }
+      },
+      "disabled": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// Resumen final\nconst data = $input.first().json;\n\nreturn [{\n  json: {\n    success: true,\n    message: `✅ Reporte semanal enviado para ${data.week_iso}`,\n    week_iso: data.week_iso,\n    sent_at: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "summary",
+      "name": "Summary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1780,
+        450
+      ]
+    }
+  ],
+  "connections": {
+    "Cron Trigger (Mon 8 AM)": {
+      "main": [
+        [
+          {
+            "node": "Prepare Dates",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Dates": {
+      "main": [
+        [
+          {
+            "node": "Query Top 10",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Query Bottom 10",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Query New Briefs",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Query KPIs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Query Top 10": {
+      "main": [
+        [
+          {
+            "node": "Prepare Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Query Bottom 10": {
+      "main": [
+        [
+          {
+            "node": "Prepare Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Query New Briefs": {
+      "main": [
+        [
+          {
+            "node": "Prepare Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Query KPIs": {
+      "main": [
+        [
+          {
+            "node": "Prepare Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Summary": {
+      "main": [
+        [
+          {
+            "node": "Format Slack Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Slack Message": {
+      "main": [
+        [
+          {
+            "node": "Check Slack",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Slack": {
+      "main": [
+        [
+          {
+            "node": "Send Slack Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Slack Webhook": {
+      "main": [
+        [
+          {
+            "node": "Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Email": {
+      "main": [
+        [
+          {
+            "node": "Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 0,
+  "updatedAt": "2024-01-01T00:00:00.000Z",
+  "versionId": "1"
+}
+

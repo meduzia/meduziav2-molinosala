@@ -1,0 +1,695 @@
+{
+  "name": "Product to Creatives - Auto Generation",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "product-creative-gen",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook",
+      "name": "Webhook - Product Input",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [
+        240,
+        400
+      ],
+      "webhookId": "product-creative-webhook"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Validate and prepare product data\nconst body = $input.first().json.body || $input.first().json;\n\nif (!body.image_url || !body.product_title) {\n  throw new Error('Missing required fields: image_url and product_title');\n}\n\nreturn [{\n  json: {\n    image_url: body.image_url,\n    product_title: body.product_title,\n    brand_context: body.brand_context || '',\n    additional_info: body.additional_info || '',\n    org_id: body.org_id || null,\n    destination: body.destination || null,\n    campaign: body.campaign || null,\n    timestamp: new Date().toISOString(),\n    week_folder: `Week_${new Date().toISOString().split('T')[0]}`\n  }\n}];"
+      },
+      "id": "validate-input",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        460,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "model": "gpt-4-vision-preview",
+        "messages": {
+          "values": [
+            {
+              "role": "user",
+              "content": "=Analiza esta imagen de producto de indumentaria en detalle.\n\nProducto: {{$json.product_title}}\nImagen: {{$json.image_url}}\n\nDescribe:\n1. Tipo de prenda y diseño general\n2. Colores principales y combinaciones\n3. Texturas, materiales aparentes y calidad percibida\n4. Detalles distintivos (estampados, bordados, cortes, etc.)\n5. Estilo y público objetivo que sugiere\n6. Contexto de uso ideal (casual, formal, deportivo, etc.)\n7. Elementos que destacan visualmente\n\nSé específico y detallado."
+            }
+          ]
+        },
+        "options": {
+          "maxTokens": 1000
+        }
+      },
+      "id": "vision-analysis",
+      "name": "OpenAI Vision - Analyze Image",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1,
+      "position": [
+        680,
+        400
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "openai-credentials",
+          "name": "OpenAI API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "model": "sonar-pro",
+        "prompt": "=Eres un investigador de Internet experto en marketing de moda y productos de indumentaria.\n\nPRODUCTO: {{$('Validate Input').item.json.product_title}}\n\nANÁLISIS VISUAL:\n{{$json.response}}\n\nCONTEXTO DE MARCA:\n{{$('Validate Input').item.json.brand_context}}\n\nRealiza una investigación profunda y estructurada del producto. Incluye:\n\n1. ANÁLISIS DEL PRODUCTO\n- Características técnicas y materiales\n- Precio promedio de mercado\n- Diferenciadores clave vs competencia\n- Usos principales y secundarios\n\n2. TARGET AUDIENCE\n- Demografía (edad, género, ubicación, poder adquisitivo)\n- Psicografía (valores, estilo de vida, aspiraciones)\n- Comportamiento de compra\n- Influencers/referentes que usan productos similares\n\n3. PUNTOS DE DOLOR\n- ¿Qué problema resuelve este producto?\n- ¿Qué frustraciones del cliente aborda?\n- ¿Qué necesidades cubre (funcionales, emocionales, sociales)?\n\n4. BENEFICIOS CLAVE\n- Funcionales (comodidad, durabilidad, versatilidad)\n- Emocionales (confianza, estilo, pertenencia)\n- Sociales (status, identidad, expresión)\n\n5. CONTEXTOS DE USO\n- Situaciones ideales de uso\n- Combinaciones de outfit\n- Temporada/clima óptimo\n\n6. TENDENCIAS Y CULTURA\n- Tendencias actuales relacionadas\n- Referencias culturales (música, cine, streetwear, etc.)\n- Palabras clave que resuenan con el target\n\n7. COPY INSIGHTS\n- Tono de comunicación que funciona\n- Palabras gatillo (urgencia, exclusividad, etc.)\n- Objeciones comunes y cómo contrarrestarlas\n\nFormato: Respuesta estructurada, completa y accionable para crear ads de alto rendimiento.",
+        "options": {}
+      },
+      "id": "perplexity-research",
+      "name": "Perplexity - Deep Research",
+      "type": "n8n-nodes-base.perplexity",
+      "typeVersion": 1,
+      "position": [
+        900,
+        400
+      ],
+      "credentials": {
+        "perplexityApi": {
+          "id": "perplexity-credentials",
+          "name": "Perplexity API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "model": "gpt-4-turbo-preview",
+        "messages": {
+          "values": [
+            {
+              "role": "system",
+              "content": "Eres un copywriter experto en Meta Ads con años de experiencia creando ángulos creativos de alta conversión para productos de indumentaria."
+            },
+            {
+              "role": "user",
+              "content": "=A partir de la investigación de un producto de indumentaria, generar 8 ángulos creativos distintos pensados para maximizar la conversión en Meta Ads (especialmente formato estático/foto).\n\nPRODUCTO: {{$('Validate Input').item.json.product_title}}\n\nANÁLISIS VISUAL:\n{{$('OpenAI Vision - Analyze Image').item.json.response}}\n\nINVESTIGACIÓN:\n{{$json.response}}\n\nA partir de la investigación detallada del producto de indumentaria que te compartí, generá 8 ángulos creativos publicitarios distintos, pensados específicamente para generar alta conversión en Meta Ads en formato estático (imagen).\n\nCada ángulo debe estar compuesto por:\n\n1. Un titular impactante, breve y directo (máximo 8 palabras), que capte la atención al hacer scroll.\n2. Un punteo de beneficios concretos (entre 3 y 5 bullets) que desarrollen el concepto del titular y estén fundamentados en lo que aprendiste de la investigación.\n\nREGLAS:\n- NO repitas la investigación. Usala para:\n  * Detectar problemas, deseos o motivaciones del público\n  * Destacar diferenciales del producto\n  * Aprovechar usos, texturas, materiales, estilo o contexto social\n- Mantené un tono aspiracional, urbano y funcional\n- Evitá tecnicismos o generalidades\n- Cada ángulo debe ser único y atacar diferentes motivaciones\n\nFormato de salida EXACTO (muy importante):\n\nÁNGULO_1\nTitular: [Titular breve]\nBeneficios: [Beneficio 1], [Beneficio 2], [Beneficio 3], [Beneficio 4 opcional]\n\nÁNGULO_2\nTitular: [Titular breve]\nBeneficios: [Beneficio 1], [Beneficio 2], [Beneficio 3], [Beneficio 4 opcional]\n\nÁNGULO_3\nTitular: [Titular breve]\nBeneficios: [Beneficio 1], [Beneficio 2], [Beneficio 3], [Beneficio 4 opcional]\n\nÁNGULO_4\nTitular: [Titular breve]\nBeneficios: [Beneficio 1], [Beneficio 2], [Beneficio 3], [Beneficio 4 opcional]\n\nÁNGULO_5\nTitular: [Titular breve]\nBeneficios: [Beneficio 1], [Beneficio 2], [Beneficio 3], [Beneficio 4 opcional]\n\nÁNGULO_6\nTitular: [Titular breve]\nBeneficios: [Beneficio 1], [Beneficio 2], [Beneficio 3], [Beneficio 4 opcional]\n\nÁNGULO_7\nTitular: [Titular breve]\nBeneficios: [Beneficio 1], [Beneficio 2], [Beneficio 3], [Beneficio 4 opcional]\n\nÁNGULO_8\nTitular: [Titular breve]\nBeneficios: [Beneficio 1], [Beneficio 2], [Beneficio 3], [Beneficio 4 opcional]"
+            }
+          ]
+        },
+        "options": {
+          "temperature": 0.8,
+          "maxTokens": 2000
+        }
+      },
+      "id": "generate-angles",
+      "name": "OpenAI - Generate 8 Angles",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1,
+      "position": [
+        1120,
+        400
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "openai-credentials",
+          "name": "OpenAI API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse and split the 8 creative angles\nconst anglesText = $json.response;\nconst productTitle = $('Validate Input').item.json.product_title;\nconst visualAnalysis = $('OpenAI Vision - Analyze Image').item.json.response;\nconst weekFolder = $('Validate Input').item.json.week_folder;\nconst orgId = $('Validate Input').item.json.org_id;\nconst destination = $('Validate Input').item.json.destination;\nconst campaign = $('Validate Input').item.json.campaign;\n\n// Split by ÁNGULO_ markers\nconst angleMatches = anglesText.split(/ÁNGULO_\\d+/).filter(a => a.trim());\n\nconst angles = angleMatches.map((angleText, index) => {\n  // Extract titular and beneficios\n  const titularMatch = angleText.match(/Titular:\\s*(.+?)\\n/i);\n  const beneficiosMatch = angleText.match(/Beneficios:\\s*(.+?)(?:\\n|$)/is);\n  \n  const titular = titularMatch ? titularMatch[1].trim() : `Ángulo ${index + 1}`;\n  const beneficios = beneficiosMatch ? beneficiosMatch[1].trim() : '';\n  \n  return {\n    angle_number: index + 1,\n    titular,\n    beneficios,\n    product_title: productTitle,\n    visual_analysis: visualAnalysis,\n    week_folder: weekFolder,\n    org_id: orgId,\n    destination: destination,\n    campaign: campaign,\n    full_text: angleText.trim()\n  };\n});\n\nif (angles.length !== 8) {\n  console.log(`Warning: Expected 8 angles, got ${angles.length}`);\n}\n\nreturn angles;"
+      },
+      "id": "split-angles",
+      "name": "Split into 8 Angles",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1340,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "id": "loop-angles",
+      "name": "Loop Each Angle",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        1560,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "model": "gpt-4-turbo-preview",
+        "messages": {
+          "values": [
+            {
+              "role": "system",
+              "content": "Eres un experto en prompt engineering para generación de imágenes publicitarias con IA. Creas prompts detallados para Stable Diffusion que generan fotos realistas de productos de indumentaria en contextos urbanos y aspiracionales."
+            },
+            {
+              "role": "user",
+              "content": "=Genera un prompt detallado para crear una imagen publicitaria del siguiente producto:\n\nPRODUCTO: {{$json.product_title}}\n\nANÁLISIS VISUAL:\n{{$json.visual_analysis}}\n\nÁNGULO CREATIVO #{{$json.angle_number}}:\nTitular: {{$json.titular}}\nBeneficios: {{$json.beneficios}}\n\nCrea un prompt para Stable Diffusion que genere una imagen publicitaria profesional que capture este ángulo creativo.\n\nEl prompt debe:\n1. Describir la prenda específicamente (tipo, color, textura, estilo)\n2. Incluir el contexto/escena ideal que refuerce el ángulo creativo\n3. Especificar la composición (plano, ángulo, iluminación)\n4. Mencionar el mood/atmósfera aspiracional\n5. Incluir detalles técnicos para calidad (professional photography, high quality, 4k, etc.)\n\nFormato: Un solo párrafo, en inglés, sin viñetas, separado por comas. Máximo 200 palabras.\n\nRespuesta SOLO el prompt, sin explicaciones adicionales."
+            }
+          ]
+        },
+        "options": {
+          "temperature": 0.7,
+          "maxTokens": 300
+        }
+      },
+      "id": "generate-image-prompt",
+      "name": "OpenAI - Image Prompt",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1,
+      "position": [
+        1780,
+        400
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "openai-credentials",
+          "name": "OpenAI API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.NANO_BANANA_API_URL || 'https://api.nanobanana.ai/v1/generate' }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.NANO_BANANA_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"prompt\": \"{{ $json.response }}\",\n  \"negative_prompt\": \"low quality, blurry, distorted, deformed, ugly, watermark, text, logo, amateur\",\n  \"width\": 1080,\n  \"height\": 1080,\n  \"num_inference_steps\": 30,\n  \"guidance_scale\": 7.5,\n  \"num_images\": 1\n}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "nanobanana-generate",
+      "name": "NanoBanana - Generate Image",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2000,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Wait for image generation and get result\nconst response = $input.first().json;\n\n// NanoBanana may return task_id or direct image_url\nif (response.task_id) {\n  return [{\n    json: {\n      task_id: response.task_id,\n      angle_number: $('Loop Each Angle').item.json.angle_number,\n      titular: $('Loop Each Angle').item.json.titular,\n      product_title: $('Loop Each Angle').item.json.product_title,\n      week_folder: $('Loop Each Angle').item.json.week_folder,\n      org_id: $('Loop Each Angle').item.json.org_id,\n      destination: $('Loop Each Angle').item.json.destination,\n      campaign: $('Loop Each Angle').item.json.campaign,\n      beneficios: $('Loop Each Angle').item.json.beneficios,\n      needs_polling: true\n    }\n  }];\n} else if (response.image_url || response.output) {\n  return [{\n    json: {\n      image_url: response.image_url || response.output[0],\n      angle_number: $('Loop Each Angle').item.json.angle_number,\n      titular: $('Loop Each Angle').item.json.titular,\n      product_title: $('Loop Each Angle').item.json.product_title,\n      week_folder: $('Loop Each Angle').item.json.week_folder,\n      org_id: $('Loop Each Angle').item.json.org_id,\n      destination: $('Loop Each Angle').item.json.destination,\n      campaign: $('Loop Each Angle').item.json.campaign,\n      beneficios: $('Loop Each Angle').item.json.beneficios,\n      needs_polling: false\n    }\n  }];\n} else {\n  throw new Error('Unexpected response from NanoBanana: ' + JSON.stringify(response));\n}"
+      },
+      "id": "check-generation",
+      "name": "Check Generation Status",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2220,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.image_url }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file"
+            }
+          }
+        }
+      },
+      "id": "download-image",
+      "name": "Download Image",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2440,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.NEXT_PUBLIC_SUPABASE_URL || $env.SUPABASE_URL }}/storage/v1/object/retrofish-assets/{{ $('Loop Each Angle').item.json.org_id || 'default' }}/{{ $('Loop Each Angle').item.json.week_folder }}/angle-{{ $('Loop Each Angle').item.json.angle_number }}-{{ $('Loop Each Angle').item.json.titular.slice(0,30).replace(/[^a-zA-Z0-9]/g, '_') }}.png",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "image/png"
+            },
+            {
+              "name": "x-upsert",
+              "value": "true"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyContentType": "binaryData",
+        "options": {}
+      },
+      "id": "upload-supabase-storage",
+      "name": "Upload to Supabase Storage",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2660,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extraer URL pública de Supabase Storage\nconst item = $input.first().json;\nconst originalData = $('Loop Each Angle').item.json;\n\nconst supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL || '';\nconst urlParts = item.request?.url?.split('/retrofish-assets/');\n\nlet fileUrl = null;\n\nif (item.Key) {\n  fileUrl = `${supabaseUrl}/storage/v1/object/public/retrofish-assets/${item.Key}`;\n} else if (item.path) {\n  fileUrl = `${supabaseUrl}/storage/v1/object/public/retrofish-assets/${item.path}`;\n} else if (item.url || item.publicUrl) {\n  fileUrl = item.url || item.publicUrl;\n} else if (urlParts && urlParts[1]) {\n  fileUrl = `${supabaseUrl}/storage/v1/object/public/retrofish-assets/${urlParts[1]}`;\n} else {\n  const path = `${originalData.org_id || 'default'}/${originalData.week_folder}/angle-${originalData.angle_number}-${originalData.titular.slice(0,30).replace(/[^a-zA-Z0-9]/g, '_')}.png`;\n  fileUrl = `${supabaseUrl}/storage/v1/object/public/retrofish-assets/${path}`;\n}\n\nif (!fileUrl) {\n  throw new Error('No se pudo obtener URL pública del archivo subido');\n}\n\nreturn [{\n  json: {\n    ...originalData,\n    file_url: fileUrl,\n    storage_path: item.Key || item.path || urlParts?.[1] || 'unknown',\n    uploaded_at: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "extract-storage-url",
+      "name": "Extract Storage URL",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2880,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Preparar datos para insertar en creatives\nconst item = $input.first().json;\n\nconst name = `${item.product_title} - Ángulo ${item.angle_number}: ${item.titular}`;\n\nconst statusHistory = [{\n  status: 'draft',\n  timestamp: new Date().toISOString(),\n  user: 'system',\n  note: 'Creative generado automáticamente desde producto'\n}];\n\nreturn [{\n  json: {\n    name: name,\n    file_url: item.file_url,\n    file_type: 'image',\n    angle: item.titular,\n    destination: item.destination || null,\n    format: 'image',\n    campaign: item.campaign || null,\n    status: 'draft',\n    status_history: JSON.stringify(statusHistory),\n    notes: `Producto: ${item.product_title}\\nBeneficios: ${item.beneficios}\\nÁngulo #${item.angle_number}`,\n    // Mantener datos adicionales\n    org_id: item.org_id,\n    angle_number: item.angle_number,\n    product_title: item.product_title\n  }\n}];"
+      },
+      "id": "prepare-creative-data",
+      "name": "Prepare Creative Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3100,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "table": "creatives",
+        "columns": "name,file_url,file_type,angle,destination,format,campaign,status,status_history,notes",
+        "options": {}
+      },
+      "id": "insert-creative",
+      "name": "Insert Creative",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        3320,
+        400
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "supabase-postgres",
+          "name": "Supabase Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $('Loop Each Angle').context.noItemsLeft }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "check-loop-complete",
+      "name": "All Angles Done?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        3540,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Recopilar todos los creative_ids generados desde todas las ejecuciones del loop\nconst creativeIds = [];\n\n// Buscar todos los resultados del nodo Insert Creative en todas las ejecuciones\nconst insertNode = $('Insert Creative');\n\nif (insertNode) {\n  const allResults = insertNode.all();\n  \n  for (const result of allResults) {\n    // El resultado puede venir en diferentes formatos según el driver de Postgres\n    if (result.json && result.json.id) {\n      creativeIds.push(result.json.id);\n    } else if (result.json && Array.isArray(result.json) && result.json.length > 0) {\n      result.json.forEach(row => {\n        if (row && row.id) creativeIds.push(row.id);\n      });\n    } else if (result.json && result.json[0] && result.json[0].id) {\n      creativeIds.push(result.json[0].id);\n    }\n  }\n}\n\nconst originalData = $('Validate Input').item.json;\n\nreturn [{\n  json: {\n    success: true,\n    message: `✅ Successfully generated ${creativeIds.length} creative angles for ${originalData.product_title}`,\n    product_title: originalData.product_title,\n    org_id: originalData.org_id || null,\n    creative_ids: creativeIds,\n    total_angles: creativeIds.length,\n    generated_at: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "success-summary",
+      "name": "Success Summary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3760,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-slack-enabled",
+              "leftValue": "={{ $env.SLACK_ENABLED || 'false' }}",
+              "rightValue": "true",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-slack",
+      "name": "Check Slack",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        3980,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "postMessage",
+        "channel": "={{ $env.SLACK_CHANNEL_CREATIVES || '#creatives' }}",
+        "text": "=🎨 *Creatives Generated Successfully!*\n\n*Product:* {{ $json.product_title }}\n*Angles Created:* {{ $json.total_angles }}\n*Creative IDs:* {{ $json.creative_ids.join(', ') }}\n\n_Generated at: {{ $json.generated_at }}_",
+        "otherOptions": {}
+      },
+      "id": "slack-notification",
+      "name": "Slack Notification",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.1,
+      "position": [
+        4200,
+        200
+      ],
+      "credentials": {
+        "slackApi": {
+          "id": "slack-credentials",
+          "name": "Slack API"
+        }
+      },
+      "disabled": true
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      },
+      "id": "return-response",
+      "name": "Return Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        3980,
+        400
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook - Product Input": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "OpenAI Vision - Analyze Image",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Vision - Analyze Image": {
+      "main": [
+        [
+          {
+            "node": "Perplexity - Deep Research",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Perplexity - Deep Research": {
+      "main": [
+        [
+          {
+            "node": "OpenAI - Generate 8 Angles",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI - Generate 8 Angles": {
+      "main": [
+        [
+          {
+            "node": "Split into 8 Angles",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split into 8 Angles": {
+      "main": [
+        [
+          {
+            "node": "Loop Each Angle",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Each Angle": {
+      "main": [
+        [
+          {
+            "node": "OpenAI - Image Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI - Image Prompt": {
+      "main": [
+        [
+          {
+            "node": "NanoBanana - Generate Image",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "NanoBanana - Generate Image": {
+      "main": [
+        [
+          {
+            "node": "Check Generation Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Generation Status": {
+      "main": [
+        [
+          {
+            "node": "Download Image",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download Image": {
+      "main": [
+        [
+          {
+            "node": "Upload to Supabase Storage",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upload to Supabase Storage": {
+      "main": [
+        [
+          {
+            "node": "Extract Storage URL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Storage URL": {
+      "main": [
+        [
+          {
+            "node": "Prepare Creative Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Creative Data": {
+      "main": [
+        [
+          {
+            "node": "Insert Creative",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert Creative": {
+      "main": [
+        [
+          {
+            "node": "All Angles Done?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "All Angles Done?": {
+      "main": [
+        [
+          {
+            "node": "Success Summary",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Loop Each Angle",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Success Summary": {
+      "main": [
+        [
+          {
+            "node": "Check Slack",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Slack": {
+      "main": [
+        [
+          {
+            "node": "Slack Notification",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Return Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Slack Notification": {
+      "main": [
+        [
+          {
+            "node": "Return Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Return Response": {
+      "main": [
+        [
+          {
+            "node": "Webhook - Product Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "name": "creatives",
+      "id": "1"
+    },
+    {
+      "name": "ai-generation",
+      "id": "2"
+    }
+  ],
+  "triggerCount": 0,
+  "updatedAt": "2024-01-01T00:00:00.000Z",
+  "versionId": "1"
+}
+

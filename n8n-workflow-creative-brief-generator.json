@@ -1,0 +1,224 @@
+{
+  "name": "Creative Brief Generator",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "creative-brief-generator",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "HTTP Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [
+        240,
+        400
+      ],
+      "webhookId": "creative-brief-generator"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Validar y preparar inputs del webhook\nconst body = $input.first().json.body || $input.first().json;\n\n// Validar campos requeridos\nif (!body.patterns_json && !body.product_page_summary) {\n  throw new Error('Al menos patterns_json o product_page_summary debe estar presente');\n}\n\n// Preparar datos\nconst data = {\n  patterns_json: body.patterns_json || {},\n  product_page_summary: body.product_page_summary || '',\n  historical_learnings: body.historical_learnings || ''\n};\n\n// Si patterns_json es string, parsearlo\nif (typeof data.patterns_json === 'string') {\n  try {\n    data.patterns_json = JSON.parse(data.patterns_json);\n  } catch (e) {\n    throw new Error('patterns_json debe ser un JSON válido: ' + e.message);\n  }\n}\n\nreturn [{\n  json: data\n}];"
+      },
+      "id": "validate-input",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        460,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "model": "gpt-4o-mini",
+        "messages": {
+          "values": [
+            {
+              "role": "system",
+              "content": "Eres un experto creativo estratégico especializado en generar briefs publicitarios de alto rendimiento para Meta Ads. Creas briefs basados en análisis de datos, patrones identificados y mejores prácticas."
+            },
+            {
+              "role": "user",
+              "content": "=Genera un brief creativo completo para Meta Ads basado en los siguientes inputs:\n\n**PATRONES IDENTIFICADOS:**\n{{ JSON.stringify($json.patterns_json, null, 2) }}\n\n**RESUMEN DE PÁGINA DE PRODUCTO:**\n{{ $json.product_page_summary || 'No proporcionado' }}\n\n**APRENDIZAJES HISTÓRICOS:**\n{{ $json.historical_learnings || 'No proporcionado' }}\n\n**Instrucciones:**\nCrea un brief creativo completo y estructurado que integre los patrones identificados, la información del producto y los aprendizajes históricos. El brief debe ser accionable y específico para generar creativos de alto rendimiento.\n\n**Formato de respuesta:**\nResponde SOLO con un JSON válido, sin texto adicional, con esta estructura exacta:\n\n{\n  \"concept_name\": \"Nombre del concepto creativo (ej: 'Joyful Urban Lifestyle')\",\n  \"creative_theme\": \"Tema creativo principal (ej: 'Authentic moments of joy in everyday life')\",\n  \"core_message\": \"Mensaje central del brief (2-3 frases que capturen el valor principal)\",\n  \"hook_variations\": [\n    {\n      \"hook\": \"Variación 1 del hook\",\n      \"rationale\": \"Por qué funciona este hook\"\n    },\n    {\n      \"hook\": \"Variación 2 del hook\",\n      \"rationale\": \"Por qué funciona este hook\"\n    },\n    {\n      \"hook\": \"Variación 3 del hook\",\n      \"rationale\": \"Por qué funciona este hook\"\n    }\n  ],\n  \"visual_treatment\": {\n    \"content_type\": \"Tipo de contenido recomendado (image/video/carousel)\",\n    \"style\": \"Estilo visual (ej: 'Authentic UGC', 'Professional lifestyle', 'Product showcase')\",\n    \"color_palette\": [\"color1\", \"color2\"],\n    \"composition\": \"Descripción de composición visual\",\n    \"mood\": \"Estado de ánimo/atmósfera\",\n    \"key_elements\": [\"elemento1\", \"elemento2\"]\n  },\n  \"ctas\": [\n    {\n      \"cta_text\": \"Texto del CTA\",\n      \"strength\": \"strong/moderate/weak\",\n      \"rationale\": \"Por qué funciona este CTA\"\n    }\n  ],\n  \"performance_predictions\": {\n    \"expected_ctr_range\": \"Rango esperado (ej: '2.5-4.0%')\",\n    \"expected_roas_range\": \"Rango esperado (ej: '3.5-5.0')\",\n    \"confidence_level\": \"high/medium/low\",\n    \"key_success_factors\": [\"factor1\", \"factor2\"],\n    \"potential_risks\": [\"riesgo1\", \"riesgo2\"],\n    \"optimization_recommendations\": [\"recomendación1\", \"recomendación2\"]\n  }\n}\n\n**Pautas importantes:**\n- Basa el brief en los patrones identificados (si están disponibles)\n- Aprovecha los aprendizajes históricos para evitar errores comunes\n- Integra la información del producto de manera natural\n- Sé específico y accionable en cada sección\n- Las predicciones deben estar fundamentadas en los datos proporcionados"
+            }
+          ]
+        },
+        "options": {
+          "temperature": 0.7,
+          "responseFormat": {
+            "type": "json_object"
+          }
+        }
+      },
+      "id": "openai-generate-brief",
+      "name": "OpenAI - Generate Brief",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1,
+      "position": [
+        680,
+        400
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "openai-credentials",
+          "name": "OpenAI API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parsear respuesta de OpenAI y preparar datos para inserción\nconst inputData = $('Validate Input').item.json;\nconst openaiResponse = $input.first().json;\n\n// Intentar parsear la respuesta JSON\nlet brief = {};\n\ntry {\n  // Si la respuesta viene en formato de mensaje\n  if (openaiResponse.response) {\n    if (typeof openaiResponse.response === 'string') {\n      brief = JSON.parse(openaiResponse.response);\n    } else {\n      brief = openaiResponse.response;\n    }\n  } else if (openaiResponse.choices && openaiResponse.choices[0]) {\n    const content = openaiResponse.choices[0].message?.content || openaiResponse.choices[0].text;\n    if (typeof content === 'string') {\n      brief = JSON.parse(content);\n    } else {\n      brief = content;\n    }\n  } else if (typeof openaiResponse === 'object' && !openaiResponse.response && !openaiResponse.choices) {\n    // Si ya es el objeto JSON directamente\n    brief = openaiResponse;\n  }\n} catch (error) {\n  console.log('Error parsing OpenAI response:', error);\n  throw new Error('No se pudo parsear la respuesta de OpenAI: ' + error.message);\n}\n\n// Validar campos requeridos\nif (!brief.concept_name || !brief.creative_theme || !brief.core_message) {\n  throw new Error('La respuesta de OpenAI no contiene los campos requeridos: concept_name, creative_theme, core_message');\n}\n\n// Preparar datos para inserción\nconst result = {\n  concept_name: brief.concept_name,\n  creative_theme: brief.creative_theme,\n  core_message: brief.core_message,\n  hook_variations: JSON.stringify(brief.hook_variations || []),\n  visual_treatment: JSON.stringify(brief.visual_treatment || {}),\n  ctas: JSON.stringify(brief.ctas || []),\n  performance_predictions: JSON.stringify(brief.performance_predictions || {}),\n  patterns_json: JSON.stringify(inputData.patterns_json),\n  product_page_summary: inputData.product_page_summary || null,\n  historical_learnings: inputData.historical_learnings || null,\n  model_used: 'gpt-4o-mini',\n  status: 'draft',\n  brief_metadata: JSON.stringify({\n    raw_response: openaiResponse,\n    parsed_at: new Date().toISOString(),\n    version: '1.0'\n  })\n};\n\nreturn [{\n  json: result\n}];"
+      },
+      "id": "parse-brief",
+      "name": "Parse Brief",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        900,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "table": "briefs",
+        "columns": "concept_name,creative_theme,core_message,hook_variations,visual_treatment,ctas,performance_predictions,patterns_json,product_page_summary,historical_learnings,model_used,status,brief_metadata",
+        "options": {}
+      },
+      "id": "insert-brief",
+      "name": "Insert Brief",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        1120,
+        400
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "supabase-postgres",
+          "name": "Supabase Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Preparar respuesta final con brief completo\nconst briefData = $('Parse Brief').item.json;\nconst insertedData = $input.first().json;\n\n// Obtener ID del insert si está disponible\nconst briefId = insertedData.id || insertedData[0]?.id || 'unknown';\n\n// Parsear JSON strings de vuelta a objetos para la respuesta\nconst response = {\n  success: true,\n  message: `✅ Brief creativo generado exitosamente: ${briefData.concept_name}`,\n  brief_id: briefId,\n  concept_name: briefData.concept_name,\n  creative_theme: briefData.creative_theme,\n  core_message: briefData.core_message,\n  hook_variations: JSON.parse(briefData.hook_variations),\n  visual_treatment: JSON.parse(briefData.visual_treatment),\n  ctas: JSON.parse(briefData.ctas),\n  performance_predictions: JSON.parse(briefData.performance_predictions),\n  status: briefData.status,\n  generated_at: new Date().toISOString()\n};\n\nreturn [{\n  json: response\n}];"
+      },
+      "id": "prepare-response",
+      "name": "Prepare Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1340,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      },
+      "id": "return-response",
+      "name": "Return Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1560,
+        400
+      ]
+    }
+  ],
+  "connections": {
+    "HTTP Trigger": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "OpenAI - Generate Brief",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI - Generate Brief": {
+      "main": [
+        [
+          {
+            "node": "Parse Brief",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Brief": {
+      "main": [
+        [
+          {
+            "node": "Insert Brief",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert Brief": {
+      "main": [
+        [
+          {
+            "node": "Prepare Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Response": {
+      "main": [
+        [
+          {
+            "node": "Return Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Return Response": {
+      "main": [
+        [
+          {
+            "node": "HTTP Trigger",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 0,
+  "updatedAt": "2024-01-01T00:00:00.000Z",
+  "versionId": "1"
+}
+

@@ -1,0 +1,488 @@
+@import "tailwindcss";
+
+/* Tema Cosmic Night - Sistema de Diseño Premium (Dark) */
+:root,
+[data-theme="dark"] {
+  /* OKLCH Color System - Dark Mode */
+  --primary: oklch(0.7162 0.1597 290.39);
+  --primary-dark: oklch(0.5 0.12 290);
+  --primary-light: oklch(0.85 0.15 290);
+
+  --secondary: oklch(0.3139 0.0736 283.45);
+  --secondary-light: oklch(0.4 0.08 283);
+
+  --accent: oklch(0.3354 0.0828 280.9);
+
+  --background: oklch(0.1743 0.0227 283.75);
+  --background-light: oklch(0.25 0.025 283);
+
+  --card: oklch(0.2284 0.0384 282.9);
+  --card-hover: oklch(0.27 0.04 282);
+
+  --foreground: oklch(0.9185 0.0057 285.88);
+  --foreground-muted: oklch(0.7 0.008 285);
+
+  --destructive: oklch(0.6861 0.2061 14.994);
+  --destructive-light: oklch(0.75 0.22 15);
+
+  --success: oklch(0.65 0.15 142);
+  --warning: oklch(0.7 0.15 38);
+
+  --border: oklch(0.3 0.035 283);
+  --border-subtle: oklch(0.25 0.03 283);
+
+  color-scheme: dark;
+}
+
+/* Tema Light - Blanco Limpio */
+[data-theme="light"] {
+  /* OKLCH Color System - Light Mode */
+  --primary: oklch(0.5417 0.179 288.0332);
+  --primary-dark: oklch(0.4 0.15 288);
+  --primary-light: oklch(0.9 0.1 288);
+
+  --secondary: oklch(0.6 0.1 280);
+  --secondary-light: oklch(0.8 0.08 280);
+
+  --accent: oklch(0.65 0.12 280);
+
+  --background: oklch(0.98 0.002 280);
+  --background-light: oklch(0.95 0.003 280);
+
+  --card: oklch(0.97 0.002 280);
+  --card-hover: oklch(0.93 0.003 280);
+
+  --foreground: oklch(0.2 0.01 280);
+  --foreground-muted: oklch(0.5 0.01 280);
+
+  --destructive: oklch(0.6861 0.2061 14.994);
+  --destructive-light: oklch(0.9 0.15 14);
+
+  --success: oklch(0.5 0.15 142);
+  --warning: oklch(0.6 0.15 38);
+
+  --border: oklch(0.9 0.01 280);
+  --border-subtle: oklch(0.95 0.005 280);
+
+  color-scheme: light;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--foreground);
+  --color-success: var(--success);
+  --color-success-foreground: var(--foreground);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--foreground);
+  --color-border: var(--border);
+  --color-input: var(--card);
+  --color-ring: var(--primary);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) {
+    color-scheme: dark;
+  }
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme]) {
+    color-scheme: light;
+  }
+}
+
+/* Animaciones y transiciones personalizadas */
+@keyframes float {
+  0%, 100% { transform: translateY(0px); }
+  50% { transform: translateY(-10px); }
+}
+
+@keyframes float-particle-slow {
+  0%, 100% {
+    transform: translateY(0px) translateX(0px);
+    opacity: 0.4;
+  }
+  25% {
+    transform: translateY(-8px) translateX(4px);
+    opacity: 0.6;
+  }
+  50% {
+    transform: translateY(-15px) translateX(0px);
+    opacity: 0.3;
+  }
+  75% {
+    transform: translateY(-8px) translateX(-4px);
+    opacity: 0.5;
+  }
+}
+
+@keyframes float-particle-medium {
+  0%, 100% {
+    transform: translateY(0px) translateX(0px);
+    opacity: 0.3;
+  }
+  33% {
+    transform: translateY(-12px) translateX(-6px);
+    opacity: 0.5;
+  }
+  66% {
+    transform: translateY(-6px) translateX(6px);
+    opacity: 0.4;
+  }
+}
+
+@keyframes float-particle-fast {
+  0%, 100% {
+    transform: translateY(0px) translateX(0px);
+    opacity: 0.5;
+  }
+  50% {
+    transform: translateY(-10px) translateX(3px);
+    opacity: 0.3;
+  }
+}
+
+@keyframes fly-airplane {
+  0% {
+    transform: translateX(-100px) translateY(100%) rotate(-15deg);
+    opacity: 0;
+  }
+  10% {
+    opacity: 0.3;
+  }
+  50% {
+    transform: translateX(50vw) translateY(-50%) rotate(-15deg);
+    opacity: 0.25;
+  }
+  90% {
+    opacity: 0.3;
+  }
+  100% {
+    transform: translateX(calc(100vw + 100px)) translateY(-100%) rotate(-15deg);
+    opacity: 0;
+  }
+}
+
+@keyframes glow-pulse {
+  0%, 100% { box-shadow: 0 0 20px var(--primary), 0 0 40px var(--primary); }
+  50% { box-shadow: 0 0 30px var(--primary), 0 0 60px var(--primary); }
+}
+
+@keyframes slide-in-right {
+  from {
+    opacity: 0;
+    transform: translateX(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes slide-in-left {
+  from {
+    opacity: 0;
+    transform: translateX(-20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes slide-in-up {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes scale-in {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+/* Efectos glow y estilos del sistema de diseño premium */
+@layer utilities {
+  /* Tarjetas mejoradas */
+  .card-premium {
+    @apply rounded-2xl p-6 backdrop-blur-sm transition-all duration-300;
+    background-color: var(--card);
+    border: 1px solid var(--border);
+  }
+
+  .card-premium:hover {
+    background-color: var(--card-hover);
+    border-color: var(--primary);
+    box-shadow: 0 8px 32px var(--primary);
+  }
+
+  /* Glow effects */
+  .glow-primary {
+    box-shadow: 0 0 30px var(--primary), 0 0 60px var(--primary);
+  }
+
+  .glow-subtle {
+    box-shadow: 0 4px 20px var(--primary), 0 0 0 1px var(--border);
+  }
+
+  .glow-card {
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3), 0 0 0 1px var(--border-subtle);
+  }
+
+  /* Gradientes */
+  .gradient-primary {
+    background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
+  }
+
+  .gradient-primary-subtle {
+    background: linear-gradient(135deg, var(--primary) 5%, var(--background) 100%);
+  }
+
+  .gradient-accent {
+    background: linear-gradient(135deg, var(--accent) 0%, var(--secondary) 100%);
+  }
+
+  .text-gradient-primary {
+    background: linear-gradient(135deg, var(--primary) 0%, var(--primary-light) 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  /* Animaciones */
+  .animate-float {
+    animation: float 3s ease-in-out infinite;
+  }
+
+  .animate-float-slow {
+    animation: float-particle-slow 6s ease-in-out infinite;
+  }
+
+  .animate-float-medium {
+    animation: float-particle-medium 4s ease-in-out infinite;
+  }
+
+  .animate-float-fast {
+    animation: float-particle-fast 3s ease-in-out infinite;
+  }
+
+  .airplane-container {
+    position: absolute;
+    top: 50%;
+    left: 0;
+    animation: fly-airplane 15s ease-in-out infinite;
+  }
+
+  .animate-slide-in-right {
+    animation: slide-in-right 0.5s ease-out;
+  }
+
+  .animate-slide-in-left {
+    animation: slide-in-left 0.5s ease-out;
+  }
+
+  .animate-slide-in-up {
+    animation: slide-in-up 0.5s ease-out;
+  }
+
+  .animate-fade-in {
+    animation: fade-in 0.5s ease-out;
+  }
+
+  .animate-scale-in {
+    animation: scale-in 0.3s ease-out;
+  }
+
+  /* Transiciones suaves */
+  .transition-smooth {
+    @apply transition-all duration-300 ease-out;
+  }
+
+  /* Efectos hover mejorados */
+  .hover-lift {
+    @apply hover:scale-[1.02] transition-all duration-300;
+  }
+
+  .hover-glow {
+    @apply transition-all duration-300;
+    box-shadow: 0 4px 12px var(--primary);
+  }
+
+  .hover-brighten {
+    @apply hover:brightness-110 transition-all duration-300;
+  }
+
+  /* Botones */
+  .btn-primary {
+    @apply text-white active:scale-95 transition-all duration-300 rounded-lg font-medium px-4 py-2;
+    background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
+  }
+
+  .btn-primary:hover {
+    box-shadow: 0 8px 20px var(--primary);
+  }
+
+  .btn-secondary {
+    @apply text-foreground transition-all duration-300 rounded-lg font-medium px-4 py-2;
+    background-color: var(--card);
+    border: 1px solid var(--border);
+  }
+
+  .btn-secondary:hover {
+    background-color: var(--card-hover);
+    border-color: var(--primary);
+  }
+
+  /* Skeleton loading mejorado */
+  .skeleton {
+    @apply animate-pulse rounded;
+    background-color: var(--card);
+  }
+
+  /* Scrollbar personalizado */
+  .scrollbar-thin {
+    scrollbar-width: thin;
+    scrollbar-color: var(--primary) transparent;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    background: var(--primary);
+    border-radius: 3px;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar-thumb:hover {
+    background: var(--primary-light);
+  }
+
+  /* Gallery scroll container - hide scrollbar but keep functionality */
+  .gallery-scroll-container {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+    scroll-behavior: smooth;
+    user-select: none;
+  }
+
+  .gallery-scroll-container::-webkit-scrollbar {
+    display: none;
+  }
+
+  /* Hide scrollbar utility */
+  .scrollbar-hide {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+/* Body y layout */
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: Arial, Helvetica, sans-serif;
+}
+
+/* Estilos para secciones */
+.dashboard-section {
+  @apply container mx-auto p-6;
+  animation: fade-in 0.5s ease-out;
+}
+
+.card-grid {
+  @apply grid gap-6 p-6;
+}
+
+/* Links */
+a {
+  @apply transition-colors duration-300;
+  color: var(--primary);
+}
+
+a:hover {
+  color: var(--primary-light);
+}
+
+/* Tabla mejorada */
+table {
+  @apply w-full;
+}
+
+thead tr {
+  border-bottom: 1px solid var(--border);
+}
+
+tbody tr {
+  border-bottom: 1px solid var(--border-subtle);
+  transition: background-color 0.3s ease;
+}
+
+tbody tr:hover {
+  background-color: rgba(35, 41, 61, 0.3);
+}
+
+/* Inputs y formularios */
+input, textarea, select {
+  background-color: var(--card);
+  border: 1px solid var(--border);
+  color: var(--foreground);
+  @apply rounded transition-all duration-300;
+}
+
+input:focus, textarea:focus, select:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px var(--primary);
+}
+
+/* Placeholder text */
+::placeholder {
+  color: var(--foreground-muted);
+}
+
+/* Hide number input spinners */
+input[type="number"]::-webkit-outer-spin-button,
+input[type="number"]::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+input[type="number"] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}

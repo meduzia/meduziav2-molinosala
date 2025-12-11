@@ -1,0 +1,470 @@
+{
+  "name": "Meta Ads Sync - Full Data",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 6
+            }
+          ]
+        }
+      },
+      "id": "cron-trigger",
+      "name": "Cron Trigger (6h)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        240,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "meta-ads-sync",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "HTTP Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [
+        240,
+        500
+      ],
+      "webhookId": "meta-ads-sync"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Preparar parámetros para Meta Graph API\nconst toDate = new Date();\nconst fromDate = new Date();\nfromDate.setDate(fromDate.getDate() - 7); // Últimos 7 días por defecto\n\nconst data = {\n  account_id: process.env.META_ACCOUNT_ID || '',\n  access_token: process.env.META_ACCESS_TOKEN || '',\n  from_date: fromDate.toISOString().split('T')[0],\n  to_date: toDate.toISOString().split('T')[0],\n  api_version: 'v18.0'\n};\n\nif (!data.account_id || !data.access_token) {\n  throw new Error('META_ACCOUNT_ID y META_ACCESS_TOKEN deben estar configurados');\n}\n\nreturn [{\n  json: data\n}];"
+      },
+      "id": "prepare-params",
+      "name": "Prepare Params",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        460,
+        450
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://graph.facebook.com/{{ $json.api_version }}/{{ $json.account_id }}/ads",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $json.access_token }}"
+            }
+          ]
+        },
+        "options": {
+          "qs": {
+            "fields": "id,name,adset_id,campaign_id,creative{thumbnail_url},permalink_url,created_time,updated_time",
+            "limit": "100"
+          }
+        }
+      },
+      "id": "get-ads",
+      "name": "Get Ads",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        680,
+        450
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Manejar paginación y extraer todos los ads\nconst item = $input.first().json;\nconst allAds = [];\n\n// Procesar respuesta inicial\nif (item.data && Array.isArray(item.data)) {\n  allAds.push(...item.data);\n}\n\n// Manejar paginación si existe\nlet nextUrl = item.paging?.next;\nlet currentData = item;\n\n// Continuar paginando hasta obtener todos los ads\nwhile (nextUrl) {\n  // En n8n, para paginación completa necesitarías hacer requests adicionales\n  // Por ahora, procesamos la primera página\n  break;\n}\n\nreturn allAds.map(ad => ({\n  json: {\n    ad_id: ad.id,\n    ad_name: ad.name || '',\n    adset_id: ad.adset_id || null,\n    campaign_id: ad.campaign_id || null,\n    creative_url: ad.creative?.thumbnail_url || null,\n    permalink_url: ad.permalink_url || null,\n    created_time: ad.created_time || null,\n    updated_time: ad.updated_time || null\n  }\n}));"
+      },
+      "id": "extract-ads",
+      "name": "Extract Ads",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        900,
+        450
+      ]
+    },
+    {
+      "parameters": {
+        "batchSize": 50,
+        "options": {}
+      },
+      "id": "split-ads-batch",
+      "name": "Split Ads Batch",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        1120,
+        450
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://graph.facebook.com/{{ $('Prepare Params').item.json.api_version }}/{{ $json.ad_id }}/insights",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $('Prepare Params').item.json.access_token }}"
+            }
+          ]
+        },
+        "options": {
+          "qs": {
+            "fields": "impressions,clicks,spend,ctr,cpc,cpa,actions",
+            "time_range": "={ 'since': '{{ $('Prepare Params').item.json.from_date }}', 'until': '{{ $('Prepare Params').item.json.to_date }}' }",
+            "time_increment": "1",
+            "level": "ad"
+          }
+        }
+      },
+      "id": "get-insights",
+      "name": "Get Insights",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1340,
+        450
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Transformar datos de ads e insights al formato de Supabase\nconst adsData = $('Split Ads Batch').item.json;\nconst insightsData = $input.first().json;\n\n// Normalizar fechas a UTC y calcular week_iso\nfunction normalizeToUTC(dateStr) {\n  if (!dateStr) return null;\n  const date = new Date(dateStr);\n  return date.toISOString();\n}\n\nfunction getWeekISO(dateStr) {\n  if (!dateStr) return null;\n  const date = new Date(dateStr + 'T00:00:00Z');\n  const year = date.getUTCFullYear();\n  const startOfYear = new Date(Date.UTC(year, 0, 1));\n  const pastDaysOfYear = (date - startOfYear) / 86400000;\n  const weekNumber = Math.ceil((pastDaysOfYear + startOfYear.getUTCDay() + 1) / 7);\n  \n  // Ajustar para ISO 8601\n  let isoWeek = weekNumber;\n  let isoYear = year;\n  \n  if (weekNumber === 0) {\n    isoYear = year - 1;\n    const prevYearStart = new Date(Date.UTC(isoYear, 0, 1));\n    const prevYearDays = (date - prevYearStart) / 86400000;\n    isoWeek = Math.ceil((prevYearDays + prevYearStart.getUTCDay() + 1) / 7);\n  } else if (weekNumber > 52) {\n    const nextYearStart = new Date(Date.UTC(year + 1, 0, 1));\n    const daysUntilNextYear = (nextYearStart - date) / 86400000;\n    if (daysUntilNextYear < 7) {\n      isoYear = year + 1;\n      isoWeek = 1;\n    }\n  }\n  \n  return `${isoYear}-W${String(isoWeek).padStart(2, '0')}`;\n}\n\nconst result = {\n  // Datos para tabla ads\n  ad_data: {\n    ad_id: adsData.ad_id,\n    ad_name: adsData.ad_name,\n    adset_id: adsData.adset_id,\n    campaign_id: adsData.campaign_id,\n    creative_url: adsData.creative_url,\n    permalink_url: adsData.permalink_url,\n    created_time: normalizeToUTC(adsData.created_time),\n    updated_time: normalizeToUTC(adsData.updated_time)\n  },\n  // Datos para tabla metrics_daily\n  metrics: []\n};\n\n// Procesar insights diarios\nif (insightsData.data && Array.isArray(insightsData.data)) {\n  for (const insight of insightsData.data) {\n    const date = insight.date_start || insight.date || new Date().toISOString().split('T')[0];\n    \n    // Extraer conversiones desde actions\n    const actions = insight.actions || [];\n    const conversions = actions\n      .filter(action => action.action_type === 'purchase' || action.action_type === 'lead' || action.action_type === 'offsite_conversion')\n      .reduce((sum, action) => sum + parseFloat(action.value || 0), 0);\n    \n    // Calcular CPA y ROAS\n    const spend = parseFloat(insight.spend || 0);\n    const cpa = conversions > 0 ? spend / conversions : null;\n    const revenuePerConversion = parseFloat(process.env.REVENUE_PER_CONVERSION || '200');\n    const revenue = conversions * revenuePerConversion;\n    const roas = spend > 0 ? revenue / spend : null;\n    \n    // Normalizar fecha y calcular week_iso\n    const normalizedDate = date;\n    const weekISO = getWeekISO(normalizedDate);\n    \n    result.metrics.push({\n      ad_id: adsData.ad_id,\n      date: normalizedDate,\n      impressions: parseInt(insight.impressions || 0),\n      clicks: parseInt(insight.clicks || 0),\n      spend: parseFloat(spend.toFixed(2)),\n      ctr: parseFloat((insight.ctr || 0).toFixed(2)),\n      cpc: parseFloat((insight.cpc || 0).toFixed(2)),\n      cpa: cpa ? parseFloat(cpa.toFixed(2)) : null,\n      roas: roas ? parseFloat(roas.toFixed(2)) : null,\n      week_iso: weekISO\n    });\n  }\n}\n\nreturn [{\n  json: result\n}];"
+      },
+      "id": "transform-data",
+      "name": "Transform Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1560,
+        450
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Preparar datos de ads para inserción\nconst item = $input.first().json;\nconst adData = item.ad_data || {};\n\nreturn [{\n  json: adData\n}];"
+      },
+      "id": "prepare-ads-data",
+      "name": "Prepare Ads Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1780,
+        350
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "upsert",
+        "table": "ads",
+        "columns": "ad_id,ad_name,adset_id,campaign_id,creative_url,permalink_url,created_time,updated_time",
+        "options": {
+          "upsertOnConflict": "ad_id"
+        }
+      },
+      "id": "upsert-ads",
+      "name": "Upsert Ads",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        2000,
+        350
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "supabase-postgres",
+          "name": "Supabase Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Preparar datos de metrics para inserción\nconst item = $input.first().json;\nconst metrics = item.metrics || [];\n\nif (metrics.length === 0) {\n  return [];\n}\n\nreturn metrics.map(metric => ({\n  json: metric\n}));"
+      },
+      "id": "prepare-metrics",
+      "name": "Prepare Metrics",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1780,
+        550
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "upsert",
+        "table": "metrics_daily",
+        "columns": "ad_id,date,impressions,clicks,spend,ctr,cpc,cpa,roas,week_iso",
+        "options": {
+          "upsertOnConflict": "ad_id,date"
+        }
+      },
+      "id": "upsert-metrics",
+      "name": "Upsert Metrics Daily",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        2220,
+        550
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "supabase-postgres",
+          "name": "Supabase Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $('Split Ads Batch').context.noItemsLeft }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "check-batch-complete",
+      "name": "Batch Complete?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        2220,
+        550
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Recopilar estadísticas de sincronización\nconst totalAds = $('Split Ads Batch').all().length;\nconst totalMetrics = $('Upsert Metrics Daily').all().length;\nconst params = $('Prepare Params').item.json;\n\nreturn [{\n  json: {\n    success: true,\n    message: `✅ Sync completed successfully`,\n    account_id: params.account_id,\n    period: `${params.from_date} to ${params.to_date}`,\n    total_ads: totalAds,\n    total_metrics_records: totalMetrics,\n    synced_at: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "sync-summary",
+      "name": "Sync Summary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2440,
+        550
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      },
+      "id": "return-response",
+      "name": "Return Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        2660,
+        550
+      ]
+    }
+  ],
+  "connections": {
+    "Cron Trigger (6h)": {
+      "main": [
+        [
+          {
+            "node": "Prepare Params",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Trigger": {
+      "main": [
+        [
+          {
+            "node": "Prepare Params",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Params": {
+      "main": [
+        [
+          {
+            "node": "Get Ads",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Ads": {
+      "main": [
+        [
+          {
+            "node": "Extract Ads",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Ads": {
+      "main": [
+        [
+          {
+            "node": "Split Ads Batch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Ads Batch": {
+      "main": [
+        [
+          {
+            "node": "Get Insights",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Insights": {
+      "main": [
+        [
+          {
+            "node": "Transform Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Transform Data": {
+      "main": [
+        [
+          {
+            "node": "Prepare Ads Data",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Prepare Metrics",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Ads Data": {
+      "main": [
+        [
+          {
+            "node": "Upsert Ads",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Metrics": {
+      "main": [
+        [
+          {
+            "node": "Upsert Metrics Daily",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upsert Ads": {
+      "main": [
+        [
+          {
+            "node": "Batch Complete?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upsert Metrics Daily": {
+      "main": [
+        [
+          {
+            "node": "Batch Complete?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Batch Complete?": {
+      "main": [
+        [
+          {
+            "node": "Sync Summary",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Split Ads Batch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sync Summary": {
+      "main": [
+        [
+          {
+            "node": "Return Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Return Response": {
+      "main": [
+        [
+          {
+            "node": "HTTP Trigger",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 0,
+  "updatedAt": "2024-01-01T00:00:00.000Z",
+  "versionId": "1"
+}
+

@@ -1,0 +1,35 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Asset {
+  id          String   @id @default(cuid())
+  name        String
+  angle       String?
+  destination String?
+  campaign    String?
+  source      String   @default("upload") // "upload" | "ai"
+  status      String   @default("draft") // "draft" | "approved" | "active" | "paused"
+  fileUrl     String
+  fileType    String   // "image" | "video"
+  fileSize    Int?     // in bytes
+  mimeType    String?
+  roas        Float?
+  cpa         Float?
+  ctr         Float?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([source])
+  @@index([status])
+  @@index([createdAt])
+}
+

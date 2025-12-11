@@ -1,0 +1,242 @@
+{
+  "name": "Meta Insights → Supabase Sync",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 1
+            }
+          ]
+        }
+      },
+      "id": "schedule-trigger",
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        240,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://graph.facebook.com/v18.0/{{ $env.META_ACCOUNT_ID }}/insights",
+        "authentication": "oAuth2Api",
+        "oAuth2Api": {
+          "oauth2Type": "facebook",
+          "accessTokenUrl": "https://graph.facebook.com/v18.0/oauth/access_token",
+          "clientId": "={{ $env.META_APP_ID }}",
+          "clientSecret": "={{ $env.META_APP_SECRET }}",
+          "scope": "ads_read,business_management",
+          "authUrl": "https://www.facebook.com/v18.0/dialog/oauth"
+        },
+        "options": {
+          "qs": {
+            "fields": "ad_id,ad_name,campaign_name,impressions,clicks,spend,actions,conversions,cpc,cpm,ctr,cpp,cpm,reach,frequency,adset_id,campaign_id",
+            "level": "ad",
+            "time_range": "={ 'since': '{{ $now.minus({days: 1}).toFormat('yyyy-MM-dd') }}', 'until': '{{ $now.toFormat('yyyy-MM-dd') }}' }",
+            "time_increment": "1",
+            "limit": "100"
+          }
+        }
+      },
+      "id": "meta-insights-api",
+      "name": "Meta Insights API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        460,
+        300
+      ],
+      "credentials": {
+        "oAuth2Api": {
+          "id": "meta-oauth2",
+          "name": "Meta OAuth2 API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Transformar datos de Meta Insights al formato de Supabase\nconst items = $input.all();\nconst transformedItems = [];\n\nfor (const item of items) {\n  const data = item.json.data || [];\n  \n  for (const insight of data) {\n    // Obtener fecha del insight\n    const date = insight.date_start || new Date().toISOString().split('T')[0];\n    \n    // Extraer acciones y conversiones\n    const actions = insight.actions || [];\n    const conversions = actions\n      .filter(action => action.action_type === 'purchase' || action.action_type === 'lead')\n      .reduce((sum, action) => sum + parseInt(action.value || 0), 0);\n    \n    // Calcular revenue (asumiendo valor promedio por conversión)\n    // Puedes ajustar esto según tu modelo de negocio\n    const revenuePerConversion = 200; // Valor promedio por conversión\n    const revenue = conversions * revenuePerConversion;\n    \n    // Calcular métricas derivadas\n    const impressions = parseInt(insight.impressions || 0);\n    const clicks = parseInt(insight.clicks || 0);\n    const spend = parseFloat(insight.spend || 0);\n    \n    const ctr = impressions > 0 ? ((clicks / impressions) * 100).toFixed(2) : 0;\n    const cpa = conversions > 0 ? (spend / conversions).toFixed(2) : 0;\n    const roas = spend > 0 ? (revenue / spend).toFixed(2) : 0;\n    \n    // Extraer destination del ad_name o campaign_name\n    // Puedes ajustar la lógica según cómo identifiques destinations\n    let destination = null;\n    if (insight.ad_name) {\n      const destMatch = insight.ad_name.match(/\\[(.*?)\\]/);\n      if (destMatch) {\n        destination = destMatch[1];\n      }\n    }\n    \n    // Extraer angle del ad_name\n    let angle = null;\n    if (insight.ad_name) {\n      // Buscar patrones comunes de angles en el nombre\n      const angleKeywords = ['Crecimiento', 'ROI', 'Transformación', 'Estrategia', 'Servicios', 'Soluciones'];\n      for (const keyword of angleKeywords) {\n        if (insight.ad_name.includes(keyword)) {\n          angle = keyword;\n          break;\n        }\n      }\n    }\n    \n    // Extraer format del ad_name o determinar por tipo de ad\n    let format = null;\n    if (insight.ad_name) {\n      const formatMatch = insight.ad_name.match(/(image|video|carousel|single_image)/i);\n      if (formatMatch) {\n        format = formatMatch[1].toLowerCase();\n      }\n    }\n    \n    const transformedItem = {\n      json: {\n        ad_id: insight.ad_id || `ad_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,\n        ad_name: insight.ad_name || 'Unknown Ad',\n        campaign_name: insight.campaign_name || null,\n        destination: destination,\n        angle: angle,\n        format: format,\n        impressions: impressions,\n        clicks: clicks,\n        spend: parseFloat(spend.toFixed(2)),\n        conversions: conversions,\n        revenue: parseFloat(revenue.toFixed(2)),\n        ctr: parseFloat(ctr),\n        cpa: parseFloat(cpa),\n        roas: parseFloat(roas),\n        date: date\n      }\n    };\n    \n    transformedItems.push(transformedItem);\n  }\n}\n\nreturn transformedItems;"
+      },
+      "id": "transform-data",
+      "name": "Transform Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        680,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "upsert",
+        "table": "ads_performance",
+        "returnAll": false,
+        "options": {
+          "upsertOnConflict": "ad_id,date"
+        }
+      },
+      "id": "supabase-upsert",
+      "name": "Supabase Upsert",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        900,
+        300
+      ],
+      "credentials": {
+        "supabaseApi": {
+          "id": "supabase-credentials",
+          "name": "Supabase API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.error }}",
+              "operation": "isNotEmpty"
+            }
+          ]
+        }
+      },
+      "id": "error-check",
+      "name": "Error Check",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        1120,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $env.TELEGRAM_CHAT_ID }}",
+        "text": "=❌ Error al sincronizar Meta Insights:\n\n{{ $json.error }}\n\nFecha: {{ $now.toFormat('yyyy-MM-dd HH:mm:ss') }}",
+        "additionalFields": {}
+      },
+      "id": "telegram-error",
+      "name": "Telegram Error",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1340,
+        200
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "telegram-credentials",
+          "name": "Telegram API"
+        }
+      },
+      "disabled": true
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $env.TELEGRAM_CHAT_ID }}",
+        "text": "=✅ Sincronización exitosa de Meta Insights\n\n📊 Registros procesados: {{ $input.all().length }}\n📅 Fecha: {{ $now.toFormat('yyyy-MM-dd HH:mm:ss') }}",
+        "additionalFields": {}
+      },
+      "id": "telegram-success",
+      "name": "Telegram Success",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1340,
+        400
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "telegram-credentials",
+          "name": "Telegram API"
+        }
+      },
+      "disabled": true
+    }
+  ],
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Meta Insights API",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Meta Insights API": {
+      "main": [
+        [
+          {
+            "node": "Transform Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Transform Data": {
+      "main": [
+        [
+          {
+            "node": "Supabase Upsert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Supabase Upsert": {
+      "main": [
+        [
+          {
+            "node": "Error Check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Error Check": {
+      "main": [
+        [
+          {
+            "node": "Telegram Error",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Telegram Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 0,
+  "updatedAt": "2024-01-01T00:00:00.000Z",
+  "versionId": "1"
+}
+

@@ -1,0 +1,261 @@
+{
+  "name": "Meta Insights → Supabase Sync (Simple)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 1
+            }
+          ]
+        }
+      },
+      "id": "schedule-trigger",
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        240,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://graph.facebook.com/v18.0/{{ $env.META_ACCOUNT_ID }}/insights",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.META_ACCESS_TOKEN }}"
+            }
+          ]
+        },
+        "options": {
+          "qs": {
+            "fields": "ad_id,ad_name,campaign_name,impressions,clicks,spend,actions,date_start,date_stop",
+            "level": "ad",
+            "time_range": "={ 'since': '{{ $now.minus({days: 1}).toFormat('yyyy-MM-dd') }}', 'until': '{{ $now.toFormat('yyyy-MM-dd') }}' }",
+            "time_increment": "1",
+            "limit": "100"
+          }
+        }
+      },
+      "id": "meta-insights-api",
+      "name": "Meta Insights API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        460,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Transformar datos de Meta Insights al formato de Supabase\nconst items = $input.all();\nconst transformedItems = [];\n\nfor (const item of items) {\n  const data = item.json.data || [];\n  \n  for (const insight of data) {\n    // Obtener fecha del insight\n    const date = insight.date_start || new Date().toISOString().split('T')[0];\n    \n    // Extraer acciones y conversiones\n    const actions = insight.actions || [];\n    const conversions = actions\n      .filter(action => action.action_type === 'purchase' || action.action_type === 'lead' || action.action_type === 'offsite_conversion')\n      .reduce((sum, action) => sum + parseInt(action.value || 0), 0);\n    \n    // Calcular revenue (ajusta según tu modelo de negocio)\n    const revenuePerConversion = parseFloat(process.env.REVENUE_PER_CONVERSION || '200');\n    const revenue = conversions * revenuePerConversion;\n    \n    // Calcular métricas derivadas\n    const impressions = parseInt(insight.impressions || 0);\n    const clicks = parseInt(insight.clicks || 0);\n    const spend = parseFloat(insight.spend || 0);\n    \n    const ctr = impressions > 0 ? parseFloat(((clicks / impressions) * 100).toFixed(2)) : 0;\n    const cpa = conversions > 0 ? parseFloat((spend / conversions).toFixed(2)) : 0;\n    const roas = spend > 0 ? parseFloat((revenue / spend).toFixed(2)) : 0;\n    \n    // Extraer destination del ad_name o campaign_name\n    let destination = null;\n    if (insight.ad_name) {\n      const destMatch = insight.ad_name.match(/\\[(.*?)\\]/);\n      if (destMatch) {\n        destination = destMatch[1];\n      }\n    }\n    \n    // Extraer angle del ad_name\n    let angle = null;\n    if (insight.ad_name) {\n      const angleKeywords = ['Crecimiento', 'ROI', 'Transformación', 'Estrategia', 'Servicios', 'Soluciones'];\n      for (const keyword of angleKeywords) {\n        if (insight.ad_name.includes(keyword)) {\n          angle = keyword;\n          break;\n        }\n      }\n    }\n    \n    // Extraer format del ad_name\n    let format = null;\n    if (insight.ad_name) {\n      const formatMatch = insight.ad_name.match(/(image|video|carousel|single_image)/i);\n      if (formatMatch) {\n        format = formatMatch[1].toLowerCase();\n      }\n    }\n    \n    // Generar ad_id único si no existe\n    const adId = insight.ad_id || `ad_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;\n    \n    const transformedItem = {\n      json: {\n        ad_id: adId,\n        ad_name: insight.ad_name || 'Unknown Ad',\n        campaign_name: insight.campaign_name || null,\n        destination: destination,\n        angle: angle,\n        format: format,\n        impressions: impressions,\n        clicks: clicks,\n        spend: parseFloat(spend.toFixed(2)),\n        conversions: conversions,\n        revenue: parseFloat(revenue.toFixed(2)),\n        ctr: ctr,\n        cpa: cpa,\n        roas: roas,\n        date: date\n      }\n    };\n    \n    transformedItems.push(transformedItem);\n  }\n}\n\nreturn transformedItems;"
+      },
+      "id": "transform-data",
+      "name": "Transform Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        680,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "table": "ads_performance",
+        "columns": "ad_id,ad_name,campaign_name,destination,angle,format,impressions,clicks,spend,conversions,revenue,ctr,cpa,roas,date",
+        "options": {
+          "skipOnConflict": true
+        }
+      },
+      "id": "supabase-insert",
+      "name": "Supabase Insert",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        900,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "supabase-postgres",
+          "name": "Supabase Postgres"
+        }
+      },
+      "notes": "Nota: Usa las credenciales de conexión directa de Supabase (no la API REST)"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "error-check",
+              "leftValue": "={{ $json.error }}",
+              "rightValue": "",
+              "operator": {
+                "type": "object",
+                "operation": "notEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "error-check",
+      "name": "Error Check",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "log-error",
+              "name": "error_message",
+              "value": "={{ $json.error || JSON.stringify($json) }}",
+              "type": "string"
+            },
+            {
+              "id": "log-timestamp",
+              "name": "timestamp",
+              "value": "={{ $now.toISO() }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "log-error",
+      "name": "Log Error",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.3,
+      "position": [
+        1340,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "log-success",
+              "name": "records_synced",
+              "value": "={{ $input.all().length }}",
+              "type": "number"
+            },
+            {
+              "id": "log-timestamp",
+              "name": "timestamp",
+              "value": "={{ $now.toISO() }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "log-success",
+      "name": "Log Success",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.3,
+      "position": [
+        1340,
+        400
+      ]
+    }
+  ],
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Meta Insights API",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Meta Insights API": {
+      "main": [
+        [
+          {
+            "node": "Transform Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Transform Data": {
+      "main": [
+        [
+          {
+            "node": "Supabase Insert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Supabase Insert": {
+      "main": [
+        [
+          {
+            "node": "Error Check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Error Check": {
+      "main": [
+        [
+          {
+            "node": "Log Error",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Log Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 0,
+  "updatedAt": "2024-01-01T00:00:00.000Z",
+  "versionId": "1"
+}
+

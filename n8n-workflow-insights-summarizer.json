@@ -1,0 +1,395 @@
+{
+  "name": "insights_summarizer",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 6
+            }
+          ]
+        }
+      },
+      "id": "cron-trigger",
+      "name": "Cron Trigger (6h)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        240,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "insights-summarizer",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "HTTP Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [
+        240,
+        500
+      ],
+      "webhookId": "insights-summarizer"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Preparar fecha de inicio (últimos 14 días)\nconst toDate = new Date();\nconst fromDate = new Date();\nfromDate.setDate(fromDate.getDate() - 14);\n\nconst data = {\n  from_date: fromDate.toISOString().split('T')[0],\n  to_date: toDate.toISOString().split('T')[0],\n  cpa_target: parseFloat(process.env.CPA_TARGET || '50'),\n  ctr_fatigue_threshold: parseFloat(process.env.CTR_FATIGUE_THRESHOLD || '25')\n};\n\nreturn [{\n  json: data\n}];"
+      },
+      "id": "prepare-dates",
+      "name": "Prepare Dates",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        460,
+        450
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "=SELECT \n  ad_id,\n  ad_name,\n  campaign_name,\n  COALESCE(campaign_name, 'Uncategorized') as ad_set,\n  angle,\n  destination,\n  format,\n  SUM(impressions) as total_impressions,\n  SUM(clicks) as total_clicks,\n  SUM(spend) as total_spend,\n  SUM(conversions) as total_conversions,\n  SUM(revenue) as total_revenue,\n  AVG(ctr) as avg_ctr,\n  AVG(cpa) as avg_cpa,\n  AVG(roas) as avg_roas,\n  COUNT(*) as days_active,\n  MIN(date) as first_seen,\n  MAX(date) as last_seen,\n  STRING_AGG(DISTINCT date::text ORDER BY date DESC, ', ') as dates,\n  -- CTR por periodo (últimos 72h vs anteriores)\n  CASE \n    WHEN MAX(date) >= CURRENT_DATE - INTERVAL '3 days' THEN\n      AVG(CASE WHEN date >= CURRENT_DATE - INTERVAL '3 days' THEN ctr ELSE NULL END)\n    ELSE NULL\n  END as ctr_last_72h,\n  CASE \n    WHEN MAX(date) >= CURRENT_DATE - INTERVAL '6 days' THEN\n      AVG(CASE WHEN date >= CURRENT_DATE - INTERVAL '6 days' AND date < CURRENT_DATE - INTERVAL '3 days' THEN ctr ELSE NULL END)\n    ELSE NULL\n  END as ctr_previous_72h\nFROM ads_performance\nWHERE date >= '{{ $json.from_date }}'\n  AND date <= '{{ $json.to_date }}'\nGROUP BY ad_id, ad_name, campaign_name, angle, destination, format\nHAVING SUM(impressions) > 0\nORDER BY total_spend DESC",
+        "options": {}
+      },
+      "id": "query-supabase",
+      "name": "Query Supabase",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        680,
+        450
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "supabase-postgres",
+          "name": "Supabase Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Agregar datos por nivel (ad, ad_set/campaign)\nconst items = $input.all();\nconst cpaTarget = $('Prepare Dates').item.json.cpa_target;\nconst ctrFatigueThreshold = $('Prepare Dates').item.json.ctr_fatigue_threshold;\n\n// Agrupar por ad_set (campaign_name)\nconst byAdSet = {};\nconst byCampaign = {};\n\nitems.forEach(item => {\n  const adSet = item.json.ad_set || 'Uncategorized';\n  const campaign = item.json.campaign_name || 'Uncategorized';\n  \n  // Por ad_set\n  if (!byAdSet[adSet]) {\n    byAdSet[adSet] = {\n      ad_set: adSet,\n      total_impressions: 0,\n      total_clicks: 0,\n      total_spend: 0,\n      total_conversions: 0,\n      total_revenue: 0,\n      ads: []\n    };\n  }\n  \n  byAdSet[adSet].total_impressions += item.json.total_impressions || 0;\n  byAdSet[adSet].total_clicks += item.json.total_clicks || 0;\n  byAdSet[adSet].total_spend += item.json.total_spend || 0;\n  byAdSet[adSet].total_conversions += item.json.total_conversions || 0;\n  byAdSet[adSet].total_revenue += item.json.total_revenue || 0;\n  byAdSet[adSet].ads.push(item.json);\n  \n  // Por campaign\n  if (!byCampaign[campaign]) {\n    byCampaign[campaign] = {\n      campaign: campaign,\n      total_impressions: 0,\n      total_clicks: 0,\n      total_spend: 0,\n      total_conversions: 0,\n      total_revenue: 0,\n      ad_sets: []\n    };\n  }\n  \n  byCampaign[campaign].total_impressions += item.json.total_impressions || 0;\n  byCampaign[campaign].total_clicks += item.json.total_clicks || 0;\n  byCampaign[campaign].total_spend += item.json.total_spend || 0;\n  byCampaign[campaign].total_conversions += item.json.total_conversions || 0;\n  byCampaign[campaign].total_revenue += item.json.total_revenue || 0;\n  \n  if (!byCampaign[campaign].ad_sets.includes(adSet)) {\n    byCampaign[campaign].ad_sets.push(adSet);\n  }\n});\n\n// Calcular métricas agregadas\nObject.values(byAdSet).forEach(adSet => {\n  adSet.avg_ctr = adSet.total_impressions > 0 ? (adSet.total_clicks / adSet.total_impressions) * 100 : 0;\n  adSet.avg_cpa = adSet.total_conversions > 0 ? adSet.total_spend / adSet.total_conversions : 0;\n  adSet.avg_roas = adSet.total_spend > 0 ? adSet.total_revenue / adSet.total_spend : 0;\n});\n\nObject.values(byCampaign).forEach(campaign => {\n  campaign.avg_ctr = campaign.total_impressions > 0 ? (campaign.total_clicks / campaign.total_impressions) * 100 : 0;\n  campaign.avg_cpa = campaign.total_conversions > 0 ? campaign.total_spend / campaign.total_conversions : 0;\n  campaign.avg_roas = campaign.total_spend > 0 ? campaign.total_revenue / campaign.total_spend : 0;\n});\n\nreturn [{\n  json: {\n    ads: items.map(i => i.json),\n    ad_sets: Object.values(byAdSet),\n    campaigns: Object.values(byCampaign),\n    cpa_target: cpaTarget,\n    ctr_fatigue_threshold: ctrFatigueThreshold,\n    period_days: 14\n  }\n}];"
+      },
+      "id": "aggregate-data",
+      "name": "Aggregate Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        900,
+        450
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.OPENAI_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": []
+        },
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"gpt-4o-mini\",\n  \"messages\": [\n    {\n      \"role\": \"system\",\n      \"content\": \"Eres un analista experto de publicidad en Meta Ads. Analiza los datos de performance y genera insights estructurados en JSON. Responde SOLO con JSON válido.\"\n    },\n    {\n      \"role\": \"user\",\n      \"content\": \"Analiza estos datos de performance de los últimos 14 días:\\n\\nAds (${$json.ads.length} total):\\n${JSON.stringify($json.ads.slice(0, 20), null, 2)}\\n\\nAd Sets (${$json.ad_sets.length} total):\\n${JSON.stringify($json.ad_sets.slice(0, 10), null, 2)}\\n\\nCampaigns (${$json.campaigns.length} total):\\n${JSON.stringify($json.campaigns.slice(0, 10), null, 2)}\\n\\nCPA Target: ${$json.cpa_target}\\nCTR Fatigue Threshold: ${$json.ctr_fatigue_threshold}% (caída >25% en últimos 72h vs anteriores 72h)\\n\\nInstrucciones:\\n1. WINNERS: Identifica top 5-10 performers por ROAS, conversiones o CTR\\n2. ANOMALIES: \\n   - CTR Fatigue: Si ctr_last_72h existe y ctr_previous_72h existe, calcula ((ctr_last_72h - ctr_previous_72h) / ctr_previous_72h * 100). Si es < -${$json.ctr_fatigue_threshold}, es fatiga.\\n   - CPA Above Target: Si avg_cpa > ${$json.cpa_target}\\n3. OPPORTUNITIES: Identifica ángulos ganadores con mejor ROAS promedio\\n\\nGenera insights en este formato JSON:\\n{\\n  \\\"winners\\\": [\\n    {\\n      \\\"type\\\": \\\"ad\\\" | \\\"ad_set\\\" | \\\"campaign\\\",\\n      \\\"id\\\": \\\"identifier\\\",\\n      \\\"name\\\": \\\"name\\\",\\n      \\\"metric\\\": \\\"ROAS\\\" | \\\"CPA\\\" | \\\"CTR\\\",\\n      \\\"value\\\": number,\\n      \\\"reasoning\\\": \\\"why it's a winner\\\"\\n    }\\n  ],\\n  \\\"anomalies\\\": [\\n    {\\n      \\\"type\\\": \\\"ctr_fatigue\\\" | \\\"cpa_above_target\\\",\\n      \\\"entity_type\\\": \\\"ad\\\" | \\\"ad_set\\\" | \\\"campaign\\\",\\n      \\\"entity_id\\\": \\\"identifier\\\",\\n      \\\"entity_name\\\": \\\"name\\\",\\n      \\\"metric\\\": \\\"CTR\\\" | \\\"CPA\\\",\\n      \\\"current_value\\\": number,\\n      \\\"threshold\\\": number,\\n      \\\"change_percentage\\\": number,\\n      \\\"reasoning\\\": \\\"explanation\\\"\\n    }\\n  ],\\n  \\\"opportunities\\\": [\\n    {\\n      \\\"type\\\": \\\"winning_angle\\\" | \\\"underperforming_ad_set\\\",\\n      \\\"angle\\\": \\\"angle name\\\",\\n      \\\"recommendation\\\": \\\"action recommendation\\\",\\n      \\\"potential_impact\\\": \\\"estimated impact\\\",\\n      \\\"reasoning\\\": \\\"why this is an opportunity\\\",\\n      \\\"evidence\\\": [\\\"supporting data points\\\"]\\n    }\\n  ]\\n}\"\n    }\n  ],\n  \"temperature\": 0.3,\n  \"response_format\": { \"type\": \"json_object\" }\n}",
+        "options": {}
+      },
+      "id": "llm-analyze",
+      "name": "LLM Analyze",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1120,
+        450
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parsear respuesta del LLM y preparar insights con evidence\nconst item = $input.first().json;\nconst originalData = $('Aggregate Data').item.json;\n\n// Extraer insights del LLM\nlet insights = {};\ntry {\n  if (item.choices && item.choices[0]?.message?.content) {\n    insights = JSON.parse(item.choices[0].message.content);\n  } else if (item.response) {\n    insights = typeof item.response === 'string' ? JSON.parse(item.response) : item.response;\n  } else if (item.winners || item.anomalies || item.opportunities) {\n    insights = item;\n  }\n} catch (e) {\n  console.error('Error parsing LLM response:', e);\n  insights = { winners: [], anomalies: [], opportunities: [] };\n}\n\n// Construir insights con evidence\nconst insightsToInsert = [];\n\n// Winners\nif (insights.winners && Array.isArray(insights.winners)) {\n  insights.winners.forEach((winner, idx) => {\n    const evidence = {};\n    \n    // Buscar datos originales para evidence\n    if (winner.type === 'ad') {\n      const adData = originalData.ads.find(a => a.ad_id === winner.id || a.ad_name === winner.name);\n      if (adData) {\n        evidence.ad_data = adData;\n      }\n    } else if (winner.type === 'ad_set') {\n      const adSetData = originalData.ad_sets.find(a => a.ad_set === winner.id || a.ad_set === winner.name);\n      if (adSetData) {\n        evidence.ad_set_data = adSetData;\n      }\n    } else if (winner.type === 'campaign') {\n      const campaignData = originalData.campaigns.find(c => c.campaign === winner.id || c.campaign === winner.name);\n      if (campaignData) {\n        evidence.campaign_data = campaignData;\n      }\n    }\n    \n    insightsToInsert.push({\n      json: {\n        insight_type: 'winner',\n        entity_type: winner.type,\n        entity_id: winner.id || winner.name,\n        entity_name: winner.name,\n        metric: winner.metric,\n        value: winner.value,\n        reasoning: winner.reasoning || '',\n        evidence: JSON.stringify(evidence),\n        priority: 'high',\n        generated_at: new Date().toISOString()\n      }\n    });\n  });\n}\n\n// Anomalies\nif (insights.anomalies && Array.isArray(insights.anomalies)) {\n  insights.anomalies.forEach((anomaly, idx) => {\n    const evidence = {\n      current_value: anomaly.current_value,\n      threshold: anomaly.threshold,\n      change_percentage: anomaly.change_percentage\n    };\n    \n    // Buscar datos originales\n    if (anomaly.entity_type === 'ad') {\n      const adData = originalData.ads.find(a => a.ad_id === anomaly.entity_id || a.ad_name === anomaly.entity_name);\n      if (adData) {\n        evidence.ad_data = adData;\n        if (anomaly.type === 'ctr_fatigue') {\n          evidence.ctr_last_72h = adData.ctr_last_72h;\n          evidence.ctr_previous_72h = adData.ctr_previous_72h;\n        }\n      }\n    }\n    \n    insightsToInsert.push({\n      json: {\n        insight_type: 'anomaly',\n        anomaly_type: anomaly.type,\n        entity_type: anomaly.entity_type,\n        entity_id: anomaly.entity_id || anomaly.entity_name,\n        entity_name: anomaly.entity_name,\n        metric: anomaly.metric,\n        value: anomaly.current_value,\n        threshold: anomaly.threshold,\n        change_percentage: anomaly.change_percentage,\n        reasoning: anomaly.reasoning || '',\n        evidence: JSON.stringify(evidence),\n        priority: anomaly.type === 'cpa_above_target' ? 'high' : 'medium',\n        generated_at: new Date().toISOString()\n      }\n    });\n  });\n}\n\n// Opportunities\nif (insights.opportunities && Array.isArray(insights.opportunities)) {\n  insights.opportunities.forEach((opportunity, idx) => {\n    const evidence = {\n      angle: opportunity.angle,\n      evidence_points: opportunity.evidence || []\n    };\n    \n    // Buscar datos del ángulo\n    if (opportunity.angle) {\n      const angleAds = originalData.ads.filter(a => a.angle === opportunity.angle);\n      if (angleAds.length > 0) {\n        evidence.angle_performance = {\n          total_ads: angleAds.length,\n          avg_roas: angleAds.reduce((sum, a) => sum + (a.avg_roas || 0), 0) / angleAds.length,\n          avg_cpa: angleAds.reduce((sum, a) => sum + (a.avg_cpa || 0), 0) / angleAds.length,\n          total_spend: angleAds.reduce((sum, a) => sum + (a.total_spend || 0), 0)\n        };\n      }\n    }\n    \n    insightsToInsert.push({\n      json: {\n        insight_type: 'opportunity',\n        opportunity_type: opportunity.type,\n        angle: opportunity.angle || null,\n        recommendation: opportunity.recommendation || '',\n        potential_impact: opportunity.potential_impact || '',\n        reasoning: opportunity.reasoning || '',\n        evidence: JSON.stringify(evidence),\n        priority: 'medium',\n        generated_at: new Date().toISOString()\n      }\n    });\n  });\n}\n\nreturn insightsToInsert.length > 0 ? insightsToInsert : [{ json: { message: 'No insights generated' } }];"
+      },
+      "id": "prepare-insights",
+      "name": "Prepare Insights",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1340,
+        450
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "table": "insights",
+        "columns": "insight_type,entity_type,entity_id,entity_name,metric,value,threshold,change_percentage,reasoning,evidence,priority,anomaly_type,opportunity_type,angle,recommendation,potential_impact,generated_at",
+        "options": {}
+      },
+      "id": "insert-insights",
+      "name": "Insert Insights",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        1560,
+        450
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "supabase-postgres",
+          "name": "Supabase Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Preparar resumen para Slack\nconst items = $input.all();\nconst summary = {\n  total_insights: items.length,\n  winners: items.filter(i => i.json.insight_type === 'winner').length,\n  anomalies: items.filter(i => i.json.insight_type === 'anomaly').length,\n  opportunities: items.filter(i => i.json.insight_type === 'opportunity').length,\n  high_priority: items.filter(i => i.json.priority === 'high').length,\n  insights: items.map(i => i.json)\n};\n\nreturn [{\n  json: summary\n}];"
+      },
+      "id": "prepare-slack-summary",
+      "name": "Prepare Slack Summary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1780,
+        450
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-slack-enabled",
+              "leftValue": "={{ $env.SLACK_ENABLED || 'false' }}",
+              "rightValue": "true",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-slack",
+      "name": "Check Slack",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        2000,
+        450
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "postMessage",
+        "channel": "={{ $env.SLACK_CHANNEL || '#insights' }}",
+        "text": "=📊 *Insights Summary - Últimos 14 días*\n\n✅ *Winners*: {{ $json.winners }}\n⚠️ *Anomalies*: {{ $json.anomalies }}\n💡 *Opportunities*: {{ $json.opportunities }}\n🔴 *High Priority*: {{ $json.high_priority }}\n\n_Total Insights: {{ $json.total_insights }}_\n\n*Top Winners:*\n{{ $json.insights.filter(i => i.insight_type === 'winner').slice(0, 3).map(w => `• ${w.entity_name}: ${w.metric} = ${w.value}`).join('\\n') }}\n\n*Critical Anomalies:*\n{{ $json.insights.filter(i => i.insight_type === 'anomaly' && i.priority === 'high').slice(0, 3).map(a => `• ${a.entity_name}: ${a.metric} = ${a.value} (threshold: ${a.threshold})`).join('\\n') }}\n\n*Opportunities:*\n{{ $json.insights.filter(i => i.insight_type === 'opportunity').slice(0, 3).map(o => `• ${o.recommendation}`).join('\\n') }}",
+        "additionalFields": {}
+      },
+      "id": "send-slack",
+      "name": "Send to Slack",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.1,
+      "position": [
+        2220,
+        350
+      ],
+      "credentials": {
+        "slackApi": {
+          "id": "slack-credentials",
+          "name": "Slack API"
+        }
+      },
+      "disabled": true
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: true, total_insights: $json.total_insights, generated_at: new Date().toISOString() }) }}",
+        "options": {}
+      },
+      "id": "return-response",
+      "name": "Return Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        2000,
+        550
+      ]
+    }
+  ],
+  "connections": {
+    "Cron Trigger (6h)": {
+      "main": [
+        [
+          {
+            "node": "Prepare Dates",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Trigger": {
+      "main": [
+        [
+          {
+            "node": "Prepare Dates",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Dates": {
+      "main": [
+        [
+          {
+            "node": "Query Supabase",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Query Supabase": {
+      "main": [
+        [
+          {
+            "node": "Aggregate Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aggregate Data": {
+      "main": [
+        [
+          {
+            "node": "LLM Analyze",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "LLM Analyze": {
+      "main": [
+        [
+          {
+            "node": "Prepare Insights",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Insights": {
+      "main": [
+        [
+          {
+            "node": "Insert Insights",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert Insights": {
+      "main": [
+        [
+          {
+            "node": "Prepare Slack Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Slack Summary": {
+      "main": [
+        [
+          {
+            "node": "Check Slack",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Slack": {
+      "main": [
+        [
+          {
+            "node": "Send to Slack",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Return Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send to Slack": {
+      "main": [
+        [
+          {
+            "node": "Return Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Return Response": {
+      "main": [
+        [
+          {
+            "node": "HTTP Trigger",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 0,
+  "updatedAt": "2024-01-01T00:00:00.000Z",
+  "versionId": "1"
+}
+

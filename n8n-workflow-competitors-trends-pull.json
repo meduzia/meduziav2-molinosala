@@ -1,0 +1,471 @@
+{
+  "name": "competitors_trends_pull",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "cronExpression": "0 6 * * *"
+        }
+      },
+      "id": "cron-trigger",
+      "name": "Cron Trigger (Diario)",
+      "type": "n8n-nodes-base.cron",
+      "typeVersion": 1.1,
+      "position": [
+        240,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://www.facebook.com/ads/library/api/?active_status=all&ad_type=all&country=ALL&media_type=all&q={{ $env.COMPETITOR_BRAND_1 }}&search_type=keyword_unordered&sort_data[direction]=desc&sort_data[mode]=relevancy_monthly_grouped",
+        "options": {
+          "timeout": 30000,
+          "headers": {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+          }
+        }
+      },
+      "id": "meta-ads-library-1",
+      "name": "Meta Ads Library - Brand 1",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        460,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://www.facebook.com/ads/library/api/?active_status=all&ad_type=all&country=ALL&media_type=all&q={{ $env.COMPETITOR_KEYWORD_1 }}&search_type=keyword_unordered&sort_data[direction]=desc&sort_data[mode]=relevancy_monthly_grouped",
+        "options": {
+          "timeout": 30000,
+          "headers": {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+          }
+        }
+      },
+      "id": "meta-ads-library-2",
+      "name": "Meta Ads Library - Keyword 1",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        460,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://www.facebook.com/ads/library/api/?active_status=all&ad_type=all&country=ALL&media_type=all&q={{ $env.COMPETITOR_KEYWORD_2 }}&search_type=keyword_unordered&sort_data[direction]=desc&sort_data[mode]=relevancy_monthly_grouped",
+        "options": {
+          "timeout": 30000,
+          "headers": {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+          }
+        }
+      },
+      "id": "meta-ads-library-3",
+      "name": "Meta Ads Library - Keyword 2",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        460,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.RSS_FEED_URL_1 || 'https://feeds.feedburner.com/oreilly/radar' }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "rss-feed-1",
+      "name": "RSS Feed 1 - Tendencias",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        460,
+        520
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.RSS_FEED_URL_2 || 'https://rss.cnn.com/rss/edition.rss' }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "rss-feed-2",
+      "name": "RSS Feed 2 - Noticias",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        460,
+        620
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.github.com/search/repositories?q={{ $env.TREND_KEYWORD || 'marketing+digital' }}&sort=updated&order=desc&per_page=10",
+        "options": {
+          "headers": {
+            "Accept": "application/vnd.github.v3+json"
+          }
+        }
+      },
+      "id": "github-trends-api",
+      "name": "GitHub Trends API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        460,
+        720
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Consolidar y transformar datos de Meta Ads Library\nconst items = $input.all();\nconst consolidatedAds = [];\n\nfor (const item of items) {\n  const data = item.json;\n  \n  // Meta Ads Library devuelve datos en formato específico\n  if (data.ad_snapshot_url || data.ad_creative_bodies || data.ad_creative_bodies?.length > 0) {\n    const ads = data.ad_snapshot_url ? [data] : (data.ad_creative_bodies || []);\n    \n    for (const ad of ads) {\n      const adData = {\n        json: {\n          ad_id: ad.ad_id || ad.adlib_id || `ad_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,\n          advertiser_name: ad.advertiser_name || ad.page_name || 'Unknown',\n          ad_creative_body: ad.ad_creative_body || ad.ad_creative_bodies?.[0] || '',\n          ad_creative_bodies: ad.ad_creative_bodies || [ad.ad_creative_body || ''],\n          ad_snapshot_url: ad.ad_snapshot_url || '',\n          page_id: ad.page_id || null,\n          ad_delivery_start_time: ad.ad_delivery_start_time || null,\n          ad_delivery_stop_time: ad.ad_delivery_stop_time || null,\n          impressions_lower_bound: ad.impressions?.lower_bound || null,\n          impressions_upper_bound: ad.impressions?.upper_bound || null,\n          spend_lower_bound: ad.spend?.lower_bound || null,\n          spend_upper_bound: ad.spend?.upper_bound || null,\n          currency: ad.currency || 'USD',\n          regions: ad.regions || [],\n          publisher_platforms: ad.publisher_platforms || [],\n          ad_format: ad.ad_format || 'unknown',\n          media_type: ad.media_type || 'unknown',\n          scraped_at: new Date().toISOString(),\n          search_query: item.json.query || item.json.q || 'unknown'\n        }\n      };\n      consolidatedAds.push(adData);\n    }\n  }\n}\n\nreturn consolidatedAds.length > 0 ? consolidatedAds : [{ json: { message: 'No ads found', items: items.map(i => i.json) } }];"
+      },
+      "id": "transform-ads-library",
+      "name": "Transform Ads Library Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        680,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parsear y transformar feeds RSS y APIs de tendencias\nconst items = $input.all();\nconst marketTrends = [];\n\nfor (const item of items) {\n  const data = item.json;\n  \n  // RSS Feed parsing\n  if (data.rss || data.feed || data.channel || data.item) {\n    const rss = data.rss || data.feed || data.channel || { item: data.item || [] };\n    const items = rss.channel?.item || rss.item || (Array.isArray(rss) ? rss : []);\n    \n    for (const entry of items) {\n      const trend = {\n        json: {\n          source: 'rss',\n          source_url: item.json.url || '',\n          title: entry.title || entry.title?.[0] || '',\n          description: entry.description || entry.description?.[0] || entry.summary || '',\n          link: entry.link || entry.link?.[0] || entry.url || '',\n          published_at: entry.pubDate || entry.published || entry.pubdate || entry.date || new Date().toISOString(),\n          author: entry.author || entry.creator || null,\n          category: entry.category || entry.tags || null,\n          content: entry.content || entry['content:encoded'] || '',\n          scraped_at: new Date().toISOString()\n        }\n      };\n      marketTrends.push(trend);\n    }\n  }\n  \n  // GitHub API parsing\n  if (data.items || data.repositories) {\n    const repos = data.items || data.repositories || [];\n    \n    for (const repo of repos) {\n      const trend = {\n        json: {\n          source: 'github',\n          source_url: 'https://api.github.com',\n          title: repo.name || repo.full_name || '',\n          description: repo.description || '',\n          link: repo.html_url || repo.url || '',\n          published_at: repo.updated_at || repo.created_at || new Date().toISOString(),\n          author: repo.owner?.login || null,\n          category: repo.topics || repo.language || null,\n          content: JSON.stringify({\n            stars: repo.stargazers_count,\n            forks: repo.forks_count,\n            language: repo.language\n          }),\n          scraped_at: new Date().toISOString()\n        }\n      };\n      marketTrends.push(trend);\n    }\n  }\n  \n  // Si es un objeto simple sin estructura RSS, tratarlo como entrada única\n  if (!data.rss && !data.feed && !data.channel && !data.item && !data.items && !data.repositories) {\n    const trend = {\n      json: {\n        source: 'api',\n        source_url: item.json.url || '',\n        title: data.title || data.name || '',\n        description: data.description || data.summary || '',\n        link: data.link || data.url || data.html_url || '',\n        published_at: data.published_at || data.published || data.created_at || data.updated_at || new Date().toISOString(),\n        author: data.author || data.creator || null,\n        category: data.category || data.tags || data.topics || null,\n        content: JSON.stringify(data),\n        scraped_at: new Date().toISOString()\n      }\n    };\n    marketTrends.push(trend);\n  }\n}\n\nreturn marketTrends.length > 0 ? marketTrends : [{ json: { message: 'No trends found' } }];"
+      },
+      "id": "transform-trends",
+      "name": "Transform Trends Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        680,
+        620
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.openai.com/v1/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.OPENAI_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": []
+        },
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"gpt-4o-mini\",\n  \"messages\": [\n    {\n      \"role\": \"system\",\n      \"content\": \"Eres un experto en análisis de anuncios publicitarios. Clasifica cada anuncio en tags de ángulos creativos. Responde SOLO con JSON válido.\"\n    },\n    {\n      \"role\": \"user\",\n      \"content\": \"Analiza este anuncio y clasifícalo en tags de ángulos:\\n\\nAdvertiser: {{ $json.advertiser_name }}\\nCreative Body: {{ $json.ad_creative_body }}\\n\\nTags disponibles: oferta, beneficio, UGC, prueba_social, emocional, humor, urgencia, escasez, autoridad, comparación, storytelling, testimonial, antes_despues, problemas_soluciones, educacional, entretenimiento, deportes_extremos, COVID, salud, tecnologia, innovacion, sostenibilidad, comunidad, exclusividad, personalizacion, garantia, descuento, gratis, trial, demo\\n\\nResponde en formato JSON: {\\\"tags\": [\"tag1\", \"tag2\"], \\\"primary_angle\": \"tag1\", \\\"confidence\": 0.95, \\\"reasoning\": \"explicación breve\"}\"\n    }\n  ],\n  \"temperature\": 0.3,\n  \"response_format\": { \"type\": \"json_object\" }\n}",
+        "options": {}
+      },
+      "id": "llm-classify-angles",
+      "name": "LLM Classify Angles",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        900,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extraer y combinar clasificación de ángulos con datos del anuncio\nconst items = $input.all();\nconst classifiedAds = [];\n\nfor (const item of items) {\n  const adData = item.json;\n  \n  // Intentar parsear respuesta del LLM\n  let classification = {\n    tags: [],\n    primary_angle: null,\n    confidence: 0,\n    reasoning: ''\n  };\n  \n  try {\n    if (adData.choices && adData.choices[0]?.message?.content) {\n      const content = adData.choices[0].message.content;\n      classification = JSON.parse(content);\n    } else if (adData.response) {\n      classification = typeof adData.response === 'string' ? JSON.parse(adData.response) : adData.response;\n    } else if (adData.tags) {\n      classification = adData;\n    }\n  } catch (e) {\n    // Si falla parsing, usar datos originales\n    console.log('Error parsing LLM response:', e);\n  }\n  \n  // Combinar datos del anuncio con clasificación\n  const classifiedAd = {\n    json: {\n      ...adData,\n      angle_tags: classification.tags || [],\n      primary_angle: classification.primary_angle || null,\n      angle_confidence: classification.confidence || 0,\n      angle_reasoning: classification.reasoning || '',\n      classified_at: new Date().toISOString()\n    }\n  };\n  \n  classifiedAds.push(classifiedAd);\n}\n\nreturn classifiedAds;"
+      },
+      "id": "merge-classification",
+      "name": "Merge Classification",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "table": "competitors_ads",
+        "columns": "ad_id,advertiser_name,ad_creative_body,ad_creative_bodies,ad_snapshot_url,page_id,ad_delivery_start_time,ad_delivery_stop_time,impressions_lower_bound,impressions_upper_bound,spend_lower_bound,spend_upper_bound,currency,regions,publisher_platforms,ad_format,media_type,angle_tags,primary_angle,angle_confidence,angle_reasoning,search_query,scraped_at",
+        "options": {
+          "skipOnConflict": true
+        }
+      },
+      "id": "insert-competitors-ads",
+      "name": "Insert Competitors Ads",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        1340,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "supabase-postgres",
+          "name": "Supabase Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "table": "market_trends",
+        "columns": "source,source_url,title,description,link,published_at,author,category,content,scraped_at",
+        "options": {
+          "skipOnConflict": true
+        }
+      },
+      "id": "insert-market-trends",
+      "name": "Insert Market Trends",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        1340,
+        620
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "supabase-postgres",
+          "name": "Supabase Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "log-summary",
+              "name": "competitors_ads_count",
+              "value": "={{ $('Insert Competitors Ads').itemCount }}",
+              "type": "number"
+            },
+            {
+              "id": "log-trends",
+              "name": "market_trends_count",
+              "value": "={{ $('Insert Market Trends').itemCount }}",
+              "type": "number"
+            },
+            {
+              "id": "log-timestamp",
+              "name": "execution_time",
+              "value": "={{ $now.toISO() }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "log-summary",
+      "name": "Log Summary",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.3,
+      "position": [
+        1560,
+        460
+      ]
+    }
+  ],
+  "connections": {
+    "Cron Trigger (Diario)": {
+      "main": [
+        [
+          {
+            "node": "Meta Ads Library - Brand 1",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Meta Ads Library - Keyword 1",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Meta Ads Library - Keyword 2",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "RSS Feed 1 - Tendencias",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "RSS Feed 2 - Noticias",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "GitHub Trends API",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Meta Ads Library - Brand 1": {
+      "main": [
+        [
+          {
+            "node": "Transform Ads Library Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Meta Ads Library - Keyword 1": {
+      "main": [
+        [
+          {
+            "node": "Transform Ads Library Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Meta Ads Library - Keyword 2": {
+      "main": [
+        [
+          {
+            "node": "Transform Ads Library Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Transform Ads Library Data": {
+      "main": [
+        [
+          {
+            "node": "LLM Classify Angles",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "LLM Classify Angles": {
+      "main": [
+        [
+          {
+            "node": "Merge Classification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Classification": {
+      "main": [
+        [
+          {
+            "node": "Insert Competitors Ads",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "RSS Feed 1 - Tendencias": {
+      "main": [
+        [
+          {
+            "node": "Transform Trends Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "RSS Feed 2 - Noticias": {
+      "main": [
+        [
+          {
+            "node": "Transform Trends Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GitHub Trends API": {
+      "main": [
+        [
+          {
+            "node": "Transform Trends Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Transform Trends Data": {
+      "main": [
+        [
+          {
+            "node": "Insert Market Trends",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert Competitors Ads": {
+      "main": [
+        [
+          {
+            "node": "Log Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert Market Trends": {
+      "main": [
+        [
+          {
+            "node": "Log Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 0,
+  "updatedAt": "2024-01-01T00:00:00.000Z",
+  "versionId": "1"
+}
+

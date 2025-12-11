@@ -1,0 +1,349 @@
+{
+  "name": "Pattern Detection - Ad Analysis",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 0 * * 1"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "cron-trigger",
+      "name": "Cron Trigger (Weekly)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        240,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "pattern-detection",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "HTTP Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [
+        240,
+        500
+      ],
+      "webhookId": "pattern-detection"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Preparar semana ISO actual\nconst today = new Date();\nconst currentWeekISO = getWeekISO(today.toISOString().split('T')[0]);\n\nfunction getWeekISO(dateStr) {\n  if (!dateStr) return null;\n  const date = new Date(dateStr + 'T00:00:00Z');\n  const year = date.getUTCFullYear();\n  const jan4 = new Date(Date.UTC(year, 0, 4));\n  const jan4Day = jan4.getUTCDay() || 7;\n  const firstMonday = new Date(Date.UTC(year, 0, 4 - jan4Day + 1));\n  const daysDiff = Math.floor((date - firstMonday) / 86400000);\n  let weekNumber = Math.floor(daysDiff / 7) + 1;\n  let isoYear = year;\n  \n  if (daysDiff < 0) {\n    const prevYear = year - 1;\n    const prevJan4 = new Date(Date.UTC(prevYear, 0, 4));\n    const prevJan4Day = prevJan4.getUTCDay() || 7;\n    const prevFirstMonday = new Date(Date.UTC(prevYear, 0, 4 - prevJan4Day + 1));\n    const prevDaysDiff = Math.floor((date - prevFirstMonday) / 86400000);\n    weekNumber = Math.floor(prevDaysDiff / 7) + 1;\n    isoYear = prevYear;\n  } else if (weekNumber === 53) {\n    const nextJan4 = new Date(Date.UTC(year + 1, 0, 4));\n    const nextJan4Day = nextJan4.getUTCDay() || 7;\n    const nextFirstMonday = new Date(Date.UTC(year + 1, 0, 4 - nextJan4Day + 1));\n    const daysUntilNextYear = Math.floor((nextFirstMonday - date) / 86400000);\n    if (daysUntilNextYear < 7) {\n      isoYear = year + 1;\n      weekNumber = 1;\n    }\n  }\n  \n  return `${isoYear}-W${String(weekNumber).padStart(2, '0')}`;\n}\n\nreturn [{\n  json: {\n    week_iso: currentWeekISO,\n    analysis_date: today.toISOString().split('T')[0]\n  }\n}];"
+      },
+      "id": "prepare-week",
+      "name": "Prepare Week ISO",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        460,
+        450
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "=SELECT \n  ar.ad_id,\n  ar.ad_name,\n  ar.creative_url,\n  ar.headline,\n  ar.copy,\n  ar.ctr,\n  ar.roas,\n  ar.cpa,\n  ar.impressions,\n  ar.clicks,\n  ar.spend,\n  ar.ranking_position,\n  c.content_type,\n  c.emotional_appeal,\n  c.target_audience,\n  c.callouts,\n  c.creative_approach,\n  c.cta_strength\nFROM ad_rankings ar\nLEFT JOIN classifications c ON ar.ad_id = c.ad_id\nWHERE ar.week_iso = '{{ $json.week_iso }}'\n  AND ar.ranking_type = 'top10'\nORDER BY ar.ranking_position\nLIMIT 10",
+        "options": {}
+      },
+      "id": "query-top10",
+      "name": "Query Top 10",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        680,
+        350
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "supabase-postgres",
+          "name": "Supabase Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "=SELECT \n  ar.ad_id,\n  ar.ad_name,\n  ar.creative_url,\n  ar.headline,\n  ar.copy,\n  ar.ctr,\n  ar.roas,\n  ar.cpa,\n  ar.impressions,\n  ar.clicks,\n  ar.spend,\n  ar.ranking_position,\n  c.content_type,\n  c.emotional_appeal,\n  c.target_audience,\n  c.callouts,\n  c.creative_approach,\n  c.cta_strength\nFROM ad_rankings ar\nLEFT JOIN classifications c ON ar.ad_id = c.ad_id\nWHERE ar.week_iso = '{{ $json.week_iso }}'\n  AND ar.ranking_type = 'bottom10'\nORDER BY ar.ranking_position\nLIMIT 10",
+        "options": {}
+      },
+      "id": "query-bottom10",
+      "name": "Query Bottom 10",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        680,
+        550
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "supabase-postgres",
+          "name": "Supabase Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Combinar top10 y bottom10 con sus clasificaciones\nconst top10Data = $('Query Top 10').all();\nconst bottom10Data = $('Query Bottom 10').all();\nconst weekData = $('Prepare Week ISO').item.json;\n\nconst top10 = top10Data.map(item => item.json);\nconst bottom10 = bottom10Data.map(item => item.json);\n\nreturn [{\n  json: {\n    week_iso: weekData.week_iso,\n    analysis_date: weekData.analysis_date,\n    top10: top10,\n    bottom10: bottom10\n  }\n}];"
+      },
+      "id": "combine-data",
+      "name": "Combine Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        900,
+        450
+      ]
+    },
+    {
+      "parameters": {
+        "model": "gpt-4o-mini",
+        "messages": {
+          "values": [
+            {
+              "role": "system",
+              "content": "Eres un experto analista de marketing digital y publicidad. Analizas patrones en anuncios de alto y bajo rendimiento para identificar factores clave de éxito."
+            },
+            {
+              "role": "user",
+              "content": "=Analiza dos grupos de anuncios de Meta Ads:\n\n**GRUPO TOP 10 (Mayor CTR):**\n{{ JSON.stringify($json.top10, null, 2) }}\n\n**GRUPO BOTTOM 10 (Menor CTR):**\n{{ JSON.stringify($json.bottom10, null, 2) }}\n\n**Instrucciones:**\nCompara estos dos grupos y identifica patrones recurrentes que expliquen las diferencias en performance. Analiza:\n\n1. **recurring_patterns_top**: Patrones comunes en el grupo TOP 10\n   - Tipos de contenido más frecuentes\n   - Atractivos emocionales que funcionan\n   - Enfoques creativos exitosos\n   - Fortalezas de CTA\n   - Audiencias objetivo\n   - Elementos destacados (callouts) recurrentes\n\n2. **recurring_patterns_bottom**: Patrones comunes en el grupo BOTTOM 10\n   - Tipos de contenido menos efectivos\n   - Atractivos emocionales que no funcionan\n   - Enfoques creativos problemáticos\n   - Debilidades de CTA\n   - Audiencias objetivo\n   - Elementos destacados (callouts) recurrentes\n\n3. **hypothesized_drivers**: Factores hipotéticos que explican la diferencia\n   - Factores clave que diferencian top de bottom\n   - Recomendaciones para mejorar ads de bajo rendimiento\n   - Insights sobre qué funciona y qué no\n   - Correlaciones entre métricas y clasificaciones\n\n**Formato de respuesta:**\nResponde SOLO con un JSON válido, sin texto adicional, con esta estructura exacta:\n\n{\n  \"recurring_patterns_top\": {\n    \"content_types\": [\"tipo1\", \"tipo2\"],\n    \"emotional_appeals\": [\"atractivo1\", \"atractivo2\"],\n    \"creative_approaches\": [\"enfoque1\", \"enfoque2\"],\n    \"cta_strengths\": [\"fuerza1\", \"fuerza2\"],\n    \"target_audiences\": [\"audiencia1\", \"audiencia2\"],\n    \"common_callouts\": [\"callout1\", \"callout2\"],\n    \"summary\": \"Resumen de patrones en top 10\"\n  },\n  \"recurring_patterns_bottom\": {\n    \"content_types\": [\"tipo1\", \"tipo2\"],\n    \"emotional_appeals\": [\"atractivo1\", \"atractivo2\"],\n    \"creative_approaches\": [\"enfoque1\", \"enfoque2\"],\n    \"cta_strengths\": [\"fuerza1\", \"fuerza2\"],\n    \"target_audiences\": [\"audiencia1\", \"audiencia2\"],\n    \"common_callouts\": [\"callout1\", \"callout2\"],\n    \"summary\": \"Resumen de patrones en bottom 10\"\n  },\n  \"hypothesized_drivers\": {\n    \"key_differentiators\": [\"factor1\", \"factor2\"],\n    \"recommendations\": [\"recomendación1\", \"recomendación2\"],\n    \"success_factors\": [\"factor1\", \"factor2\"],\n    \"failure_factors\": [\"factor1\", \"factor2\"],\n    \"insights\": \"Análisis profundo de qué explica las diferencias\"\n  }\n}"
+            }
+          ]
+        },
+        "options": {
+          "temperature": 0.5,
+          "responseFormat": {
+            "type": "json_object"
+          }
+        }
+      },
+      "id": "openai-analyze",
+      "name": "OpenAI - Analyze Patterns",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1,
+      "position": [
+        1120,
+        450
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "openai-credentials",
+          "name": "OpenAI API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parsear respuesta de OpenAI y preparar datos para inserción\nconst combinedData = $('Combine Data').item.json;\nconst openaiResponse = $input.first().json;\n\n// Intentar parsear la respuesta JSON\nlet patterns = {};\n\ntry {\n  // Si la respuesta viene en formato de mensaje\n  if (openaiResponse.response) {\n    if (typeof openaiResponse.response === 'string') {\n      patterns = JSON.parse(openaiResponse.response);\n    } else {\n      patterns = openaiResponse.response;\n    }\n  } else if (openaiResponse.choices && openaiResponse.choices[0]) {\n    const content = openaiResponse.choices[0].message?.content || openaiResponse.choices[0].text;\n    if (typeof content === 'string') {\n      patterns = JSON.parse(content);\n    } else {\n      patterns = content;\n    }\n  } else if (typeof openaiResponse === 'object') {\n    patterns = openaiResponse;\n  }\n} catch (error) {\n  console.log('Error parsing OpenAI response:', error);\n  // Valores por defecto si falla el parseo\n  patterns = {\n    recurring_patterns_top: {},\n    recurring_patterns_bottom: {},\n    hypothesized_drivers: {}\n  };\n}\n\n// Validar y preparar datos finales\nconst result = {\n  week_iso: combinedData.week_iso,\n  analysis_date: combinedData.analysis_date,\n  recurring_patterns_top: patterns.recurring_patterns_top || {},\n  recurring_patterns_bottom: patterns.recurring_patterns_bottom || {},\n  hypothesized_drivers: patterns.hypothesized_drivers || {},\n  top10_ads: JSON.stringify(combinedData.top10),\n  bottom10_ads: JSON.stringify(combinedData.bottom10),\n  model_used: 'gpt-4o-mini',\n  analysis_metadata: JSON.stringify({\n    raw_response: openaiResponse,\n    parsed_at: new Date().toISOString(),\n    top10_count: combinedData.top10.length,\n    bottom10_count: combinedData.bottom10.length\n  })\n};\n\nreturn [{\n  json: result\n}];"
+      },
+      "id": "parse-patterns",
+      "name": "Parse Patterns",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1340,
+        450
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "table": "patterns",
+        "columns": "week_iso,analysis_date,recurring_patterns_top,recurring_patterns_bottom,hypothesized_drivers,top10_ads,bottom10_ads,model_used,analysis_metadata",
+        "options": {}
+      },
+      "id": "insert-patterns",
+      "name": "Insert Patterns",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        1560,
+        450
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "supabase-postgres",
+          "name": "Supabase Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Preparar respuesta final\nconst patternsData = $('Parse Patterns').item.json;\nconst weekData = $('Prepare Week ISO').item.json;\n\nreturn [{\n  json: {\n    success: true,\n    message: `✅ Análisis de patrones completado para ${weekData.week_iso}`,\n    week_iso: weekData.week_iso,\n    analysis_date: weekData.analysis_date,\n    recurring_patterns_top: patternsData.recurring_patterns_top,\n    recurring_patterns_bottom: patternsData.recurring_patterns_bottom,\n    hypothesized_drivers: patternsData.hypothesized_drivers,\n    generated_at: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "prepare-response",
+      "name": "Prepare Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1780,
+        450
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      },
+      "id": "return-response",
+      "name": "Return Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        2000,
+        450
+      ]
+    }
+  ],
+  "connections": {
+    "Cron Trigger (Weekly)": {
+      "main": [
+        [
+          {
+            "node": "Prepare Week ISO",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Trigger": {
+      "main": [
+        [
+          {
+            "node": "Prepare Week ISO",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Week ISO": {
+      "main": [
+        [
+          {
+            "node": "Query Top 10",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Query Bottom 10",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Query Top 10": {
+      "main": [
+        [
+          {
+            "node": "Combine Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Query Bottom 10": {
+      "main": [
+        [
+          {
+            "node": "Combine Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Combine Data": {
+      "main": [
+        [
+          {
+            "node": "OpenAI - Analyze Patterns",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI - Analyze Patterns": {
+      "main": [
+        [
+          {
+            "node": "Parse Patterns",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Patterns": {
+      "main": [
+        [
+          {
+            "node": "Insert Patterns",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert Patterns": {
+      "main": [
+        [
+          {
+            "node": "Prepare Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Response": {
+      "main": [
+        [
+          {
+            "node": "Return Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Return Response": {
+      "main": [
+        [
+          {
+            "node": "HTTP Trigger",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 0,
+  "updatedAt": "2024-01-01T00:00:00.000Z",
+  "versionId": "1"
+}
+

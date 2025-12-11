@@ -1,0 +1,350 @@
+{
+  "name": "Ads Benchmark - Weekly Rankings",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 0 * * 1"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "cron-trigger",
+      "name": "Cron Trigger (Weekly)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        240,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "ads-benchmark",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "HTTP Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [
+        240,
+        500
+      ],
+      "webhookId": "ads-benchmark"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Preparar parámetros para consulta\nconst today = new Date();\nconst currentWeekISO = getWeekISO(today.toISOString().split('T')[0]);\n\nfunction getWeekISO(dateStr) {\n  if (!dateStr) return null;\n  const date = new Date(dateStr + 'T00:00:00Z');\n  const year = date.getUTCFullYear();\n  const jan4 = new Date(Date.UTC(year, 0, 4));\n  const jan4Day = jan4.getUTCDay() || 7;\n  const firstMonday = new Date(Date.UTC(year, 0, 4 - jan4Day + 1));\n  const daysDiff = Math.floor((date - firstMonday) / 86400000);\n  let weekNumber = Math.floor(daysDiff / 7) + 1;\n  let isoYear = year;\n  \n  if (daysDiff < 0) {\n    const prevYear = year - 1;\n    const prevJan4 = new Date(Date.UTC(prevYear, 0, 4));\n    const prevJan4Day = prevJan4.getUTCDay() || 7;\n    const prevFirstMonday = new Date(Date.UTC(prevYear, 0, 4 - prevJan4Day + 1));\n    const prevDaysDiff = Math.floor((date - prevFirstMonday) / 86400000);\n    weekNumber = Math.floor(prevDaysDiff / 7) + 1;\n    isoYear = prevYear;\n  } else if (weekNumber === 53) {\n    const nextJan4 = new Date(Date.UTC(year + 1, 0, 4));\n    const nextJan4Day = nextJan4.getUTCDay() || 7;\n    const nextFirstMonday = new Date(Date.UTC(year + 1, 0, 4 - nextJan4Day + 1));\n    const daysUntilNextYear = Math.floor((nextFirstMonday - date) / 86400000);\n    if (daysUntilNextYear < 7) {\n      isoYear = year + 1;\n      weekNumber = 1;\n    }\n  }\n  \n  return `${isoYear}-W${String(weekNumber).padStart(2, '0')}`;\n}\n\nreturn [{\n  json: {\n    week_iso: currentWeekISO,\n    snapshot_date: today.toISOString().split('T')[0]\n  }\n}];"
+      },
+      "id": "prepare-week",
+      "name": "Prepare Week ISO",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        460,
+        450
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "=SELECT \n  m.ad_id,\n  a.ad_name,\n  a.creative_url,\n  a.permalink_url,\n  a.adset_id,\n  a.campaign_id,\n  AVG(m.ctr) as avg_ctr,\n  AVG(m.roas) as avg_roas,\n  AVG(m.cpa) as avg_cpa,\n  SUM(m.impressions) as total_impressions,\n  SUM(m.clicks) as total_clicks,\n  SUM(m.spend) as total_spend,\n  COUNT(DISTINCT m.date) as days_active\nFROM metrics_daily m\nLEFT JOIN ads a ON m.ad_id = a.ad_id\nWHERE m.week_iso = '{{ $json.week_iso }}'\n  AND m.impressions > 0\nGROUP BY m.ad_id, a.ad_name, a.creative_url, a.permalink_url, a.adset_id, a.campaign_id\nHAVING SUM(m.impressions) >= 1000\nORDER BY AVG(m.ctr) DESC",
+        "options": {}
+      },
+      "id": "query-metrics",
+      "name": "Query Metrics Daily",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        680,
+        450
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "supabase-postgres",
+          "name": "Supabase Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Obtener headline y copy desde Meta API si es necesario\n// Por ahora, extraeremos de ad_name o usaremos valores por defecto\nconst items = $input.all();\n\nconst enrichedItems = items.map(item => {\n  const adName = item.json.ad_name || '';\n  \n  // Intentar extraer headline y copy del nombre del ad\n  // Formato común: \"Headline - Copy\" o similar\n  const parts = adName.split(' - ');\n  const headline = parts[0] || adName.slice(0, 30);\n  const copy = parts.slice(1).join(' - ') || adName.slice(30) || 'No copy available';\n  \n  return {\n    json: {\n      ...item.json,\n      headline: headline.trim(),\n      copy: copy.trim()\n    }\n  };\n});\n\nreturn enrichedItems;"
+      },
+      "id": "enrich-with-copy",
+      "name": "Enrich with Copy/Headline",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        900,
+        450
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Separar top10 y bottom10 por CTR\nconst items = $input.all();\n\nif (items.length === 0) {\n  return [{\n    json: {\n      top10: [],\n      bottom10: [],\n      total_ads: 0\n    }\n  }];\n}\n\n// Ordenar por CTR descendente\nconst sorted = items.sort((a, b) => {\n  const ctrA = parseFloat(a.json.avg_ctr || 0);\n  const ctrB = parseFloat(b.json.avg_ctr || 0);\n  return ctrB - ctrA;\n});\n\n// Top 10\nconst top10 = sorted.slice(0, 10).map((item, index) => ({\n  ad_id: item.json.ad_id,\n  ad_name: item.json.ad_name,\n  creative_url: item.json.creative_url,\n  permalink_url: item.json.permalink_url,\n  headline: item.json.headline,\n  copy: item.json.copy,\n  ctr: parseFloat((item.json.avg_ctr || 0).toFixed(2)),\n  roas: parseFloat((item.json.avg_roas || 0).toFixed(2)),\n  cpa: parseFloat((item.json.avg_cpa || 0).toFixed(2)),\n  impressions: parseInt(item.json.total_impressions || 0),\n  clicks: parseInt(item.json.total_clicks || 0),\n  spend: parseFloat((item.json.total_spend || 0).toFixed(2)),\n  days_active: parseInt(item.json.days_active || 0),\n  ranking_position: index + 1\n}));\n\n// Bottom 10\nconst bottom10 = sorted.slice(-10).reverse().map((item, index) => ({\n  ad_id: item.json.ad_id,\n  ad_name: item.json.ad_name,\n  creative_url: item.json.creative_url,\n  permalink_url: item.json.permalink_url,\n  headline: item.json.headline,\n  copy: item.json.copy,\n  ctr: parseFloat((item.json.avg_ctr || 0).toFixed(2)),\n  roas: parseFloat((item.json.avg_roas || 0).toFixed(2)),\n  cpa: parseFloat((item.json.avg_cpa || 0).toFixed(2)),\n  impressions: parseInt(item.json.total_impressions || 0),\n  clicks: parseInt(item.json.total_clicks || 0),\n  spend: parseFloat((item.json.total_spend || 0).toFixed(2)),\n  days_active: parseInt(item.json.days_active || 0),\n  ranking_position: index + 1\n}));\n\nconst weekData = $('Prepare Week ISO').item.json;\n\nreturn [{\n  json: {\n    week_iso: weekData.week_iso,\n    snapshot_date: weekData.snapshot_date,\n    top10: top10,\n    bottom10: bottom10,\n    total_ads: sorted.length\n  }\n}];"
+      },
+      "id": "calculate-rankings",
+      "name": "Calculate Rankings",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        450
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Preparar datos para insertar top10\nconst item = $input.first().json;\nconst weekISO = item.week_iso;\nconst snapshotDate = item.snapshot_date;\n\nconst top10Records = item.top10.map(rank => ({\n  json: {\n    week_iso: weekISO,\n    snapshot_date: snapshotDate,\n    ranking_type: 'top10',\n    ad_id: rank.ad_id,\n    ad_name: rank.ad_name,\n    creative_url: rank.creative_url,\n    permalink_url: rank.permalink_url || null,\n    headline: rank.headline,\n    copy: rank.copy,\n    ctr: rank.ctr,\n    roas: rank.roas,\n    cpa: rank.cpa,\n    impressions: rank.impressions,\n    clicks: rank.clicks,\n    spend: rank.spend,\n    conversions: null, // Se puede calcular si hay datos de conversiones\n    ranking_position: rank.ranking_position,\n    metadata: JSON.stringify({\n      days_active: rank.days_active\n    })\n  }\n}));\n\nreturn top10Records;"
+      },
+      "id": "prepare-top10",
+      "name": "Prepare Top 10",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1340,
+        350
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Preparar datos para insertar bottom10\nconst item = $input.first().json;\nconst weekISO = item.week_iso;\nconst snapshotDate = item.snapshot_date;\n\nconst bottom10Records = item.bottom10.map(rank => ({\n  json: {\n    week_iso: weekISO,\n    snapshot_date: snapshotDate,\n    ranking_type: 'bottom10',\n    ad_id: rank.ad_id,\n    ad_name: rank.ad_name,\n    creative_url: rank.creative_url,\n    permalink_url: rank.permalink_url || null,\n    headline: rank.headline,\n    copy: rank.copy,\n    ctr: rank.ctr,\n    roas: rank.roas,\n    cpa: rank.cpa,\n    impressions: rank.impressions,\n    clicks: rank.clicks,\n    spend: rank.spend,\n    conversions: null,\n    ranking_position: rank.ranking_position,\n    metadata: JSON.stringify({\n      days_active: rank.days_active\n    })\n  }\n}));\n\nreturn bottom10Records;"
+      },
+      "id": "prepare-bottom10",
+      "name": "Prepare Bottom 10",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1340,
+        550
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "table": "ad_rankings",
+        "columns": "week_iso,snapshot_date,ranking_type,ad_id,ad_name,creative_url,permalink_url,headline,copy,ctr,roas,cpa,impressions,clicks,spend,conversions,ranking_position,metadata",
+        "options": {}
+      },
+      "id": "insert-top10",
+      "name": "Insert Top 10",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        1560,
+        350
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "supabase-postgres",
+          "name": "Supabase Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "table": "ad_rankings",
+        "columns": "week_iso,snapshot_date,ranking_type,ad_id,ad_name,creative_url,permalink_url,headline,copy,ctr,roas,cpa,impressions,clicks,spend,conversions,ranking_position,metadata",
+        "options": {}
+      },
+      "id": "insert-bottom10",
+      "name": "Insert Bottom 10",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        1560,
+        550
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "supabase-postgres",
+          "name": "Supabase Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Preparar respuesta final esperando que ambos inserts terminen\nconst rankingsData = $('Calculate Rankings').item.json;\nconst weekData = $('Prepare Week ISO').item.json;\n\nreturn [{\n  json: {\n    success: true,\n    message: `✅ Rankings calculados y guardados para ${weekData.week_iso}`,\n    week_iso: weekData.week_iso,\n    snapshot_date: weekData.snapshot_date,\n    top10: rankingsData.top10,\n    bottom10: rankingsData.bottom10,\n    total_ads: rankingsData.total_ads,\n    generated_at: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "prepare-response",
+      "name": "Prepare Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1780,
+        450
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      },
+      "id": "return-response",
+      "name": "Return Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        2000,
+        450
+      ]
+    }
+  ],
+  "connections": {
+    "Cron Trigger (Weekly)": {
+      "main": [
+        [
+          {
+            "node": "Prepare Week ISO",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Trigger": {
+      "main": [
+        [
+          {
+            "node": "Prepare Week ISO",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Week ISO": {
+      "main": [
+        [
+          {
+            "node": "Query Metrics Daily",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Query Metrics Daily": {
+      "main": [
+        [
+          {
+            "node": "Enrich with Copy/Headline",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Enrich with Copy/Headline": {
+      "main": [
+        [
+          {
+            "node": "Calculate Rankings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Calculate Rankings": {
+      "main": [
+        [
+          {
+            "node": "Prepare Top 10",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Prepare Bottom 10",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Top 10": {
+      "main": [
+        [
+          {
+            "node": "Insert Top 10",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Bottom 10": {
+      "main": [
+        [
+          {
+            "node": "Insert Bottom 10",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert Top 10": {
+      "main": [
+        [
+          {
+            "node": "Prepare Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert Bottom 10": {
+      "main": [
+        [
+          {
+            "node": "Prepare Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Response": {
+      "main": [
+        [
+          {
+            "node": "Return Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Return Response": {
+      "main": [
+        [
+          {
+            "node": "HTTP Trigger",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 0,
+  "updatedAt": "2024-01-01T00:00:00.000Z",
+  "versionId": "1"
+}
+

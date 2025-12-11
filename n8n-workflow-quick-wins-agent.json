@@ -1,0 +1,370 @@
+{
+  "name": "Quick Wins Agent - SQL Query",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "quick-wins-agent",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "HTTP Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [
+        240,
+        400
+      ],
+      "webhookId": "quick-wins-agent"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Validar y preparar input del usuario\nconst body = $input.first().json.body || $input.first().json;\nconst query = body.query || body.text || body.question || '';\nconst userId = body.user_id || body.user || 'anonymous';\nconst channel = body.channel || null;\n\nif (!query || query.trim().length === 0) {\n  throw new Error('Por favor proporciona una pregunta o consulta. Ejemplo: \"Top ads últimos 7 días\"');\n}\n\nreturn [{\n  json: {\n    query: query.trim(),\n    user_id: userId,\n    channel: channel,\n    timestamp: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "validate-input",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        460,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "model": "gpt-4o-mini",
+        "messages": {
+          "values": [
+            {
+              "role": "system",
+              "content": "Eres un experto en SQL y bases de datos PostgreSQL. Tu tarea es convertir preguntas en lenguaje natural a consultas SQL válidas y seguras.\n\nREGLAS CRÍTICAS:\n1. SOLO genera SQL válido, sin explicaciones adicionales\n2. Usa las tablas disponibles: ads, metrics_daily, ad_rankings, classifications, briefs, patterns\n3. NO uses funciones peligrosas (DROP, DELETE, UPDATE, INSERT, TRUNCATE)\n4. LIMITA resultados a máximo 100 filas\n5. Formatea números y fechas apropiadamente\n6. Si la pregunta es ambigua, haz suposiciones razonables basadas en el contexto\n7. Para fechas relativas como 'últimos 7 días', usa CURRENT_DATE - INTERVAL '7 days'\n8. Siempre incluye ORDER BY cuando tenga sentido\n9. Usa nombres de columnas correctos según el esquema"
+            },
+            {
+              "role": "user",
+              "content": "=Convierte esta pregunta a SQL:\n\n\"{{ $json.query }}\"\n\nEsquema de tablas disponible:\n\n**ads** (información de anuncios):\n- id, ad_id, ad_name, adset_id, campaign_id, creative_url, permalink_url, created_time, updated_time\n\n**metrics_daily** (métricas diarias por ad):\n- id, ad_id, date, impressions, clicks, spend, ctr, cpc, cpa, roas, week_iso\n\n**ad_rankings** (rankings semanales):\n- id, week_iso, snapshot_date, ranking_type, ad_id, ad_name, headline, ctr, roas, cpa, impressions, clicks, spend, ranking_position\n\n**classifications** (clasificaciones de ads):\n- id, ad_id, ad_name, content_type, emotional_appeal, target_audience, callouts, creative_approach, cta_strength\n\n**briefs** (briefs creativos):\n- id, concept_name, creative_theme, core_message, hook_variations, visual_treatment, ctas, performance_predictions, status, created_at\n\n**patterns** (patrones detectados):\n- id, week_iso, recurring_patterns_top, recurring_patterns_bottom, hypothesized_drivers, created_at\n\nResponde SOLO con el SQL válido, sin texto adicional, sin explicaciones, sin markdown, sin backticks. Solo el SQL."
+            }
+          ]
+        },
+        "options": {
+          "temperature": 0.1,
+          "maxTokens": 500
+        }
+      },
+      "id": "openai-generate-sql",
+      "name": "OpenAI - Generate SQL",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1,
+      "position": [
+        680,
+        400
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "openai-credentials",
+          "name": "OpenAI API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extraer SQL de la respuesta de OpenAI\nconst openaiResponse = $input.first().json;\n\nlet sqlQuery = '';\n\ntry {\n  // Intentar extraer SQL de diferentes formatos de respuesta\n  if (openaiResponse.response) {\n    sqlQuery = typeof openaiResponse.response === 'string' \n      ? openaiResponse.response.trim() \n      : openaiResponse.response;\n  } else if (openaiResponse.choices && openaiResponse.choices[0]) {\n    const content = openaiResponse.choices[0].message?.content || openaiResponse.choices[0].text;\n    sqlQuery = typeof content === 'string' ? content.trim() : content;\n  } else if (typeof openaiResponse === 'string') {\n    sqlQuery = openaiResponse.trim();\n  } else if (typeof openaiResponse === 'object') {\n    sqlQuery = JSON.stringify(openaiResponse);\n  }\n  \n  // Limpiar SQL: remover markdown, backticks, explicaciones\n  sqlQuery = sqlQuery\n    .replace(/```sql/gi, '')\n    .replace(/```/g, '')\n    .replace(/^SELECT/i, 'SELECT') // Normalizar SELECT\n    .trim();\n  \n  // Validar que sea SQL válido (básico)\n  const dangerousKeywords = ['DROP', 'DELETE', 'UPDATE', 'INSERT', 'TRUNCATE', 'ALTER', 'CREATE', 'EXEC', 'EXECUTE'];\n  const upperQuery = sqlQuery.toUpperCase();\n  \n  for (const keyword of dangerousKeywords) {\n    if (upperQuery.includes(keyword)) {\n      throw new Error(`Operación no permitida: ${keyword}. Solo se permiten consultas SELECT.`);\n    }\n  }\n  \n  // Asegurar que empiece con SELECT\n  if (!upperQuery.trim().startsWith('SELECT')) {\n    throw new Error('Solo se permiten consultas SELECT.');\n  }\n  \n  // Limitar resultados si no tiene LIMIT\n  if (!upperQuery.includes('LIMIT')) {\n    if (sqlQuery.trim().endsWith(';')) {\n      sqlQuery = sqlQuery.slice(0, -1) + ' LIMIT 100;';\n    } else {\n      sqlQuery = sqlQuery + ' LIMIT 100';\n    }\n  }\n  \n} catch (error) {\n  throw new Error('Error procesando SQL: ' + error.message);\n}\n\nconst originalData = $('Validate Input').item.json;\n\nreturn [{\n  json: {\n    ...originalData,\n    sql_query: sqlQuery,\n    generated_at: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "parse-sql",
+      "name": "Parse SQL",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        900,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ $json.sql_query }}",
+        "options": {}
+      },
+      "id": "execute-sql",
+      "name": "Execute SQL",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        1120,
+        400
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "supabase-postgres",
+          "name": "Supabase Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Formatear resultados y generar respuesta natural\nconst queryData = $('Parse SQL').item.json;\nconst sqlResults = $input.all();\n\nconst results = sqlResults.map(item => item.json);\n\n// Generar respuesta natural usando LLM\nconst resultSummary = {\n  total_rows: results.length,\n  columns: results.length > 0 ? Object.keys(results[0]) : [],\n  sample_data: results.slice(0, 5), // Primeras 5 filas para contexto\n  full_data: results\n};\n\nreturn [{\n  json: {\n    ...queryData,\n    results: results,\n    result_summary: resultSummary,\n    executed_at: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "format-results",
+      "name": "Format Results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1340,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "model": "gpt-4o-mini",
+        "messages": {
+          "values": [
+            {
+              "role": "system",
+              "content": "Eres un asistente que ayuda a interpretar resultados de consultas SQL. Genera respuestas naturales y útiles basadas en los datos."
+            },
+            {
+              "role": "user",
+              "content": "=Pregunta original: \"{{ $json.query }}\"\n\nSQL ejecutado: {{ $json.sql_query }}\n\nResultados ({{ $json.result_summary.total_rows }} filas):\n{{ JSON.stringify($json.result_summary.sample_data, null, 2) }}\n{{ $json.result_summary.total_rows > 5 ? '... (mostrando primeras 5 de ' + $json.result_summary.total_rows + ' filas)' : '' }}\n\nGenera una respuesta natural y útil en español que:\n1. Responde directamente la pregunta del usuario\n2. Incluye los datos más relevantes\n3. Destaca insights o patrones interesantes\n4. Es concisa pero informativa\n5. Si hay muchos resultados, menciona que hay más datos disponibles\n\nResponde solo con el texto de la respuesta, sin formato adicional."
+            }
+          ]
+        },
+        "options": {
+          "temperature": 0.5,
+          "maxTokens": 500
+        }
+      },
+      "id": "openai-natural-response",
+      "name": "OpenAI - Natural Response",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1,
+      "position": [
+        1560,
+        400
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "openai-credentials",
+          "name": "OpenAI API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Combinar SQL, resultados y respuesta natural\nconst queryData = $('Format Results').item.json;\nconst naturalResponse = $input.first().json;\n\n// Extraer respuesta natural\nlet naturalText = '';\n\ntry {\n  if (naturalResponse.response) {\n    naturalText = typeof naturalResponse.response === 'string' \n      ? naturalResponse.response.trim() \n      : naturalResponse.response;\n  } else if (naturalResponse.choices && naturalResponse.choices[0]) {\n    const content = naturalResponse.choices[0].message?.content || naturalResponse.choices[0].text;\n    naturalText = typeof content === 'string' ? content.trim() : content;\n  } else if (typeof naturalResponse === 'string') {\n    naturalText = naturalResponse.trim();\n  }\n} catch (error) {\n  naturalText = 'Consulta ejecutada exitosamente. Se encontraron ' + queryData.result_summary.total_rows + ' resultados.';\n}\n\n// Preparar respuesta final\nconst response = {\n  success: true,\n  query: queryData.query,\n  sql_query: queryData.sql_query,\n  natural_response: naturalText,\n  results: queryData.results,\n  total_rows: queryData.result_summary.total_rows,\n  columns: queryData.result_summary.columns,\n  executed_at: queryData.executed_at\n};\n\nreturn [{\n  json: response\n}];"
+      },
+      "id": "prepare-response",
+      "name": "Prepare Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1780,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-slack-channel",
+              "leftValue": "={{ $('Validate Input').item.json.channel }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "isNotEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-slack",
+      "name": "Check Slack Channel",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        2000,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SLACK_WEBHOOK_URL }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"text\": \"💬 *Consulta:* {{ $json.query }}\\n\\n{{ $json.natural_response }}\\n\\n📊 *Resultados:* {{ $json.total_rows }} filas\\n\\n```\\n{{ JSON.stringify($json.results.slice(0, 10), null, 2) }}\\n{{ $json.results.length > 10 ? '... (mostrando primeras 10 de ' + $json.results.length + ' filas)' : '' }}\\n```\"\n}",
+        "options": {}
+      },
+      "id": "send-slack-response",
+      "name": "Send Slack Response",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2220,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      },
+      "id": "return-response",
+      "name": "Return Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        2220,
+        500
+      ]
+    }
+  ],
+  "connections": {
+    "HTTP Trigger": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "OpenAI - Generate SQL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI - Generate SQL": {
+      "main": [
+        [
+          {
+            "node": "Parse SQL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse SQL": {
+      "main": [
+        [
+          {
+            "node": "Execute SQL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute SQL": {
+      "main": [
+        [
+          {
+            "node": "Format Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Results": {
+      "main": [
+        [
+          {
+            "node": "OpenAI - Natural Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI - Natural Response": {
+      "main": [
+        [
+          {
+            "node": "Prepare Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Response": {
+      "main": [
+        [
+          {
+            "node": "Check Slack Channel",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Slack Channel": {
+      "main": [
+        [
+          {
+            "node": "Send Slack Response",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Return Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Slack Response": {
+      "main": [
+        [
+          {
+            "node": "Return Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Return Response": {
+      "main": [
+        [
+          {
+            "node": "HTTP Trigger",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 0,
+  "updatedAt": "2024-01-01T00:00:00.000Z",
+  "versionId": "1"
+}
+

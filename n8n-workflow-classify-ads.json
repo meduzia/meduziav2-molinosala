@@ -1,0 +1,352 @@
+{
+  "name": "Classify Ads - Creative Classification",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 24
+            }
+          ]
+        }
+      },
+      "id": "cron-trigger",
+      "name": "Cron Trigger (Daily)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        240,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "classify-ads",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "HTTP Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [
+        240,
+        500
+      ],
+      "webhookId": "classify-ads"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Preparar parámetros para consulta de últimos 14 días\nconst today = new Date();\nconst fourteenDaysAgo = new Date();\nfourteenDaysAgo.setDate(fourteenDaysAgo.getDate() - 14);\n\nreturn [{\n  json: {\n    start_date: fourteenDaysAgo.toISOString().split('T')[0],\n    end_date: today.toISOString().split('T')[0]\n  }\n}];"
+      },
+      "id": "prepare-dates",
+      "name": "Prepare Dates",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        460,
+        450
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "=SELECT DISTINCT\n  m.ad_id,\n  a.ad_name,\n  a.creative_url,\n  a.permalink_url\nFROM metrics_daily m\nLEFT JOIN ads a ON m.ad_id = a.ad_id\nWHERE m.date >= '{{ $json.start_date }}'\n  AND m.date <= '{{ $json.end_date }}'\n  AND m.ad_id IS NOT NULL\n  AND NOT EXISTS (\n    SELECT 1 FROM classifications c \n    WHERE c.ad_id = m.ad_id\n  )\nORDER BY m.ad_id\nLIMIT 100",
+        "options": {}
+      },
+      "id": "query-ads",
+      "name": "Query Ads (Last 14 Days)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        680,
+        450
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "supabase-postgres",
+          "name": "Supabase Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "id": "loop-ads",
+      "name": "Loop Each Ad",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        900,
+        450
+      ]
+    },
+    {
+      "parameters": {
+        "model": "gpt-4o-mini",
+        "messages": {
+          "values": [
+            {
+              "role": "system",
+              "content": "Eres un experto en análisis de creatividad publicitaria y marketing digital. Analiza anuncios de Meta Ads y proporciona clasificaciones estructuradas en JSON."
+            },
+            {
+              "role": "user",
+              "content": "=Analiza este anuncio de Meta Ads y clasifícalo según los criterios solicitados.\n\n**Información del Anuncio:**\n- ID: {{ $json.ad_id }}\n- Nombre: {{ $json.ad_name || 'No disponible' }}\n- URL Creativa: {{ $json.creative_url || 'No disponible' }}\n- URL del Anuncio: {{ $json.permalink_url || 'No disponible' }}\n\n**Instrucciones:**\nAnaliza el anuncio y proporciona una clasificación detallada en formato JSON con los siguientes campos:\n\n1. **content_type**: Tipo de contenido (ej: 'image', 'video', 'carousel', 'single_image', 'video_story', etc.)\n2. **emotional_appeal**: Atractivo emocional principal (ej: 'fear', 'joy', 'excitement', 'trust', 'urgency', 'social_proof', 'aspiration', 'nostalgia', etc.)\n3. **target_audience**: Audiencia objetivo inferida (ej: 'young_adults_18-24', 'professionals_25-34', 'parents_35-44', 'seniors_55+', 'students', 'entrepreneurs', etc.)\n4. **callouts**: Array de elementos destacados o puntos clave visibles (ej: [\"50% off\", \"Limited time\", \"Free shipping\", \"Testimonials\", etc.])\n5. **creative_approach**: Enfoque creativo principal (ej: 'UGC', 'lifestyle', 'product_showcase', 'before_after', 'testimonial', 'animation', 'explainer', 'tutorial', etc.)\n6. **cta_strength**: Fuerza del llamado a la acción (ej: 'strong', 'moderate', 'weak', 'none')\n\n**Formato de respuesta:**\nResponde SOLO con un JSON válido, sin texto adicional, con esta estructura exacta:\n\n{\n  \"content_type\": \"tipo\",\n  \"emotional_appeal\": \"atractivo\",\n  \"target_audience\": \"audiencia\",\n  \"callouts\": [\"elemento1\", \"elemento2\"],\n  \"creative_approach\": \"enfoque\",\n  \"cta_strength\": \"fuerza\"\n}\n\nSi no puedes determinar algún campo con certeza, usa \"unknown\" como valor."
+            }
+          ]
+        },
+        "options": {
+          "temperature": 0.3,
+          "responseFormat": {
+            "type": "json_object"
+          }
+        }
+      },
+      "id": "openai-classify",
+      "name": "OpenAI - Classify Ad",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1,
+      "position": [
+        1120,
+        450
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "openai-credentials",
+          "name": "OpenAI API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parsear respuesta de OpenAI y preparar datos para inserción\nconst adData = $('Loop Each Ad').item.json;\nconst openaiResponse = $input.first().json;\n\n// Intentar parsear la respuesta JSON\nlet classification = {};\n\ntry {\n  // Si la respuesta viene en formato de mensaje\n  if (openaiResponse.response) {\n    // Intentar parsear si es string\n    if (typeof openaiResponse.response === 'string') {\n      classification = JSON.parse(openaiResponse.response);\n    } else {\n      classification = openaiResponse.response;\n    }\n  } else if (openaiResponse.choices && openaiResponse.choices[0]) {\n    const content = openaiResponse.choices[0].message?.content || openaiResponse.choices[0].text;\n    if (typeof content === 'string') {\n      classification = JSON.parse(content);\n    } else {\n      classification = content;\n    }\n  } else if (typeof openaiResponse === 'object') {\n    // Si ya es un objeto JSON\n    classification = openaiResponse;\n  }\n} catch (error) {\n  console.log('Error parsing OpenAI response:', error);\n  // Valores por defecto si falla el parseo\n  classification = {\n    content_type: 'unknown',\n    emotional_appeal: 'unknown',\n    target_audience: 'unknown',\n    callouts: [],\n    creative_approach: 'unknown',\n    cta_strength: 'unknown'\n  };\n}\n\n// Validar y normalizar campos\nconst result = {\n  ad_id: adData.ad_id,\n  ad_name: adData.ad_name || null,\n  creative_url: adData.creative_url || null,\n  permalink_url: adData.permalink_url || null,\n  content_type: classification.content_type || 'unknown',\n  emotional_appeal: classification.emotional_appeal || 'unknown',\n  target_audience: classification.target_audience || 'unknown',\n  callouts: Array.isArray(classification.callouts) ? classification.callouts : (classification.callouts ? [classification.callouts] : []),\n  creative_approach: classification.creative_approach || 'unknown',\n  cta_strength: classification.cta_strength || 'unknown',\n  model_used: 'gpt-4o-mini',\n  confidence_score: null, // Se puede calcular si OpenAI devuelve un score\n  classification_metadata: JSON.stringify({\n    raw_response: openaiResponse,\n    parsed_at: new Date().toISOString()\n  })\n};\n\nreturn [{\n  json: result\n}];"
+      },
+      "id": "parse-classification",
+      "name": "Parse Classification",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1340,
+        450
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "upsert",
+        "table": "classifications",
+        "columns": "ad_id,ad_name,creative_url,permalink_url,content_type,emotional_appeal,target_audience,callouts,creative_approach,cta_strength,model_used,confidence_score,classification_metadata",
+        "options": {
+          "upsertOnConflict": "ad_id"
+        }
+      },
+      "id": "insert-classification",
+      "name": "Insert Classification",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        1560,
+        450
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "supabase-postgres",
+          "name": "Supabase Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $('Loop Each Ad').context.noItemsLeft }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "check-loop-complete",
+      "name": "All Ads Processed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1780,
+        450
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Recopilar estadísticas de clasificación\nconst totalProcessed = $('Loop Each Ad').all().length;\nconst totalInserted = $('Insert Classification').all().length;\nconst dateRange = $('Prepare Dates').item.json;\n\nreturn [{\n  json: {\n    success: true,\n    message: `✅ Clasificación completada para ${totalProcessed} ads`,\n    total_processed: totalProcessed,\n    total_inserted: totalInserted,\n    date_range: `${dateRange.start_date} to ${dateRange.end_date}`,\n    processed_at: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "summary",
+      "name": "Summary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2000,
+        450
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      },
+      "id": "return-response",
+      "name": "Return Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        2220,
+        450
+      ]
+    }
+  ],
+  "connections": {
+    "Cron Trigger (Daily)": {
+      "main": [
+        [
+          {
+            "node": "Prepare Dates",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Trigger": {
+      "main": [
+        [
+          {
+            "node": "Prepare Dates",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Dates": {
+      "main": [
+        [
+          {
+            "node": "Query Ads (Last 14 Days)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Query Ads (Last 14 Days)": {
+      "main": [
+        [
+          {
+            "node": "Loop Each Ad",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Each Ad": {
+      "main": [
+        [
+          {
+            "node": "OpenAI - Classify Ad",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI - Classify Ad": {
+      "main": [
+        [
+          {
+            "node": "Parse Classification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Classification": {
+      "main": [
+        [
+          {
+            "node": "Insert Classification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert Classification": {
+      "main": [
+        [
+          {
+            "node": "All Ads Processed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "All Ads Processed?": {
+      "main": [
+        [
+          {
+            "node": "Summary",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Loop Each Ad",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Summary": {
+      "main": [
+        [
+          {
+            "node": "Return Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Return Response": {
+      "main": [
+        [
+          {
+            "node": "HTTP Trigger",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 0,
+  "updatedAt": "2024-01-01T00:00:00.000Z",
+  "versionId": "1"
+}
+

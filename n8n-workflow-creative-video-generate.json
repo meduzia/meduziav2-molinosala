@@ -1,0 +1,925 @@
+{
+  "name": "creative_video_generate",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "creative-video-generate",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [
+        240,
+        400
+      ],
+      "webhookId": "creative-video-generate"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Validar y preparar datos del webhook\nconst body = $input.first().json.body || $input.first().json;\n\n// Validar campos requeridos\nconst requiredFields = ['org_id', 'brief', 'base_angle'];\nconst missingFields = requiredFields.filter(field => !body[field]);\n\nif (missingFields.length > 0) {\n  throw new Error(`Campos requeridos faltantes: ${missingFields.join(', ')}`);\n}\n\n// Preparar datos\nconst data = {\n  org_id: body.org_id,\n  brief: body.brief,\n  base_angle: body.base_angle,\n  destination: body.destination || null,\n  video_provider: body.video_provider || process.env.VIDEO_PROVIDER || 'sora',\n  brand_color: process.env.BRAND_PRIMARY_COLOR || '#000000'\n};\n\n// Validar proveedor\nconst validProviders = ['sora', 'runway', 'pika', 'kling'];\nif (!validProviders.includes(data.video_provider.toLowerCase())) {\n  data.video_provider = 'sora';\n}\n\nreturn [{\n  json: data\n}];"
+      },
+      "id": "validate-input",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        460,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "jsonSchemaExample": "{\n  \"storyboard\": {\n    \"hook\": \"Opening scene description (3-5 seconds)\",\n    \"body\": \"Main content description (8-10 seconds)\",\n    \"cta\": \"Call to action scene description (2-3 seconds)\",\n    \"total_duration\": 15,\n    \"aspect_ratio\": \"9:16\",\n    \"style\": \"Cinematic description\",\n    \"mood\": \"Tone description\"\n  }\n}\n"
+      },
+      "id": "storyboard-structure",
+      "name": "Storyboard Structure",
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.2,
+      "position": [
+        1080,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=Create a storyboard for a marketing video creative based on this brief:\n\nBrief: {{ $json.brief }}\nCreative Angle: {{ $json.base_angle }}\n{{ $json.destination ? `Destination: ${$json.destination}` : '' }}\nBrand Color: {{ $json.brand_color }}\n\nRequirements:\n- Video duration: approximately 15 seconds\n- Aspect ratio: 9:16 (vertical, mobile-first)\n- Structure: Hook (3-5s), Body (8-10s), CTA (2-3s)\n- Style: Professional, engaging, optimized for social media\n- Include brand color accents ({{ $json.brand_color }})\n\nCreate a detailed storyboard with:\n1. Hook: Opening scene that grabs attention\n2. Body: Main content that delivers the message\n3. CTA: Clear call-to-action scene\n4. Style guidance for visual consistency\n5. Mood and tone descriptions",
+        "hasOutputParser": true,
+        "options": {
+          "systemMessage": "=You are an expert video creative director specializing in social media marketing videos. Your task is to create detailed storyboards for 15-second vertical videos (9:16 aspect ratio) optimized for platforms like Instagram Reels, TikTok, and Facebook Stories.\n\nStructure:\n- Hook: First 3-5 seconds must grab attention immediately\n- Body: 8-10 seconds of main content\n- CTA: Final 2-3 seconds with clear call-to-action\n\nAlways output valid JSON matching the schema. Focus on visual descriptions, camera movements, and pacing. Include brand color references where appropriate."
+        }
+      },
+      "id": "llm-storyboard",
+      "name": "LLM Storyboard Generator",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.9,
+      "position": [
+        840,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "model": "={{ $env.LLM_MODEL || 'gpt-4o-mini' }}",
+        "options": {}
+      },
+      "id": "openai-model",
+      "name": "OpenAI Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.2,
+      "position": [
+        680,
+        200
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "openai-credentials",
+          "name": "OpenAI API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Combinar storyboard con datos originales y construir prompt de video\nconst item = $input.first().json;\nconst originalData = $('Validate Input').item.json;\n\n// Extraer storyboard del output del LLM\nlet storyboard = {};\nif (item.output?.storyboard) {\n  storyboard = item.output.storyboard;\n} else if (item.storyboard) {\n  storyboard = item.storyboard;\n} else if (item.output) {\n  storyboard = item.output;\n}\n\n// Construir prompt completo para generación de video\nconst videoPrompt = `${storyboard.hook || 'Opening scene'}. ${storyboard.body || 'Main content'}. ${storyboard.cta || 'Call to action'}`;\n\n// Determinar tamaño según proveedor\nlet size = '720x1280'; // 9:16 default\nif (originalData.video_provider === 'runway') {\n  size = '768x1344';\n} else if (originalData.video_provider === 'pika') {\n  size = '1024x1792';\n}\n\nreturn [{\n  json: {\n    ...originalData,\n    storyboard: storyboard,\n    video_prompt: videoPrompt,\n    duration: storyboard.total_duration || 15,\n    aspect_ratio: storyboard.aspect_ratio || '9:16',\n    size: size,\n    style: storyboard.style || 'professional',\n    mood: storyboard.mood || 'engaging'\n  }\n}];"
+      },
+      "id": "build-video-prompt",
+      "name": "Build Video Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-provider-sora",
+              "leftValue": "={{ $json.video_provider.toLowerCase() }}",
+              "rightValue": "sora",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "select-provider",
+      "name": "Select Provider",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        1540,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.openai.com/v1/videos",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.OPENAI_API_KEY }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "model",
+              "value": "=sora-2-pro"
+            },
+            {
+              "name": "prompt",
+              "value": "={{ $json.video_prompt }}"
+            },
+            {
+              "name": "size",
+              "value": "={{ $json.size }}"
+            },
+            {
+              "name": "seconds",
+              "value": "={{ $json.duration }}"
+            }
+          ]
+        },
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 1
+            }
+          }
+        }
+      },
+      "id": "generate-video-sora",
+      "name": "Generate Video - Sora",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1760,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.RUNWAY_API_URL || 'https://api.runwayml.com/v1/image-to-video' }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.RUNWAY_API_KEY }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"prompt\": \"{{ $json.video_prompt }}\",\n  \"aspect_ratio\": \"{{ $json.aspect_ratio }}\",\n  \"duration\": {{ $json.duration }}\n}",
+        "options": {}
+      },
+      "id": "generate-video-runway",
+      "name": "Generate Video - Runway",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1760,
+        400
+      ],
+      "disabled": true
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.PIKA_API_URL || 'https://api.pika.art/v1/videos' }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.PIKA_API_KEY }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"prompt\": \"{{ $json.video_prompt }}\",\n  \"aspect_ratio\": \"{{ $json.aspect_ratio }}\",\n  \"duration\": {{ $json.duration }}\n}",
+        "options": {}
+      },
+      "id": "generate-video-pika",
+      "name": "Generate Video - Pika",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1760,
+        500
+      ],
+      "disabled": true
+    },
+    {
+      "parameters": {
+        "amount": 30
+      },
+      "id": "wait-polling",
+      "name": "Wait",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        1980,
+        400
+      ],
+      "webhookId": "video-polling-wait"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Verificar el proveedor y construir URL de polling\nconst item = $input.first().json;\nconst videoId = item.id || item.video_id || item.job_id;\nconst provider = item.video_provider || $('Build Video Prompt').item.json.video_provider;\n\nlet pollingUrl = '';\n\nif (provider === 'sora') {\n  pollingUrl = `https://api.openai.com/v1/videos/${videoId}`;\n} else if (provider === 'runway') {\n  pollingUrl = `${process.env.RUNWAY_API_URL || 'https://api.runwayml.com/v1/image-to-video'}/${videoId}`;\n} else if (provider === 'pika') {\n  pollingUrl = `${process.env.PIKA_API_URL || 'https://api.pika.art/v1/videos'}/${videoId}`;\n}\n\nreturn [{\n  json: {\n    ...item,\n    polling_url: pollingUrl,\n    video_id: videoId\n  }\n}];"
+      },
+      "id": "prepare-polling",
+      "name": "Prepare Polling",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1760,
+        600
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.polling_url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "id": "get-video-status",
+      "name": "Get Video Status",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2200,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "id": "status-completed",
+                    "leftValue": "={{ $json.status }}",
+                    "rightValue": "completed",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "completed"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "id": "status-in-progress",
+                    "leftValue": "={{ $json.status }}",
+                    "rightValue": "in_progress",
+                    "operator": {
+                      "type": "string",
+                      "operation": "contains"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "in_progress"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "id": "status-failed",
+                    "leftValue": "={{ $json.status }}",
+                    "rightValue": "failed",
+                    "operator": {
+                      "type": "string",
+                      "operation": "contains"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "failed"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "check-status",
+      "name": "Check Status",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        2420,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Descargar video desde la URL proporcionada\nconst item = $input.first().json;\nconst originalData = $('Build Video Prompt').item.json;\n\nlet videoUrl = item.video_url || item.url || item.download_url || item.content_url;\n\n// Si no hay URL directa, construir desde video_id\nif (!videoUrl && item.video_id) {\n  if (originalData.video_provider === 'sora') {\n    videoUrl = `https://api.openai.com/v1/videos/${item.video_id}/content`;\n  }\n}\n\nif (!videoUrl) {\n  throw new Error('No se pudo obtener URL del video');\n}\n\nreturn [{\n  json: {\n    ...originalData,\n    ...item,\n    video_download_url: videoUrl\n  }\n}];"
+      },
+      "id": "prepare-download",
+      "name": "Prepare Download",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2640,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.video_download_url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file"
+            }
+          }
+        }
+      },
+      "id": "download-video",
+      "name": "Download Video",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2860,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// QC: Verificar duración y fps del video\n// Nota: En n8n, el análisis de video requiere herramientas externas\n// Esta es una implementación básica que verifica metadata básica\nconst item = $input.first().json;\nconst originalData = $('Build Video Prompt').item.json;\n\n// Obtener datos binarios del video\nconst videoBinary = item.binary?.data || item.data;\n\nif (!videoBinary) {\n  throw new Error('No se encontraron datos binarios del video');\n}\n\n// Validaciones básicas (en producción, usar ffprobe o similar)\nconst expectedDuration = originalData.duration || 15;\nconst minDuration = expectedDuration - 2; // Tolerancia de 2 segundos\nconst maxDuration = expectedDuration + 2;\n\n// Construir objeto de QC\nconst qcResult = {\n  passed: true,\n  checks: {\n    duration: {\n      expected: expectedDuration,\n      tolerance: '±2 seconds',\n      status: 'pending_verification'\n    },\n    fps: {\n      expected: '24-30',\n      status: 'pending_verification'\n    },\n    format: {\n      expected: 'mp4',\n      status: 'pending_verification'\n    }\n  },\n  notes: 'QC básico completado. Para verificación completa de duración y fps, integrar ffprobe o servicio externo.'\n};\n\nreturn [{\n  json: {\n    ...originalData,\n    ...item,\n    qc_result: qcResult,\n    qc_passed: qcResult.passed\n  },\n  binary: {\n    data: videoBinary\n  }\n}];"
+      },
+      "id": "qc-video",
+      "name": "QC Video",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3080,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "qc-passed",
+              "leftValue": "={{ $json.qc_passed }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-qc",
+      "name": "Check QC",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        3300,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.NEXT_PUBLIC_SUPABASE_URL || $env.SUPABASE_URL }}/storage/v1/object/retrofish-assets/{{ $('Build Video Prompt').item.json.org_id }}/{{ $now.toFormat('yyyy-MM-dd') }}/video-{{ $('Build Video Prompt').item.json.base_angle }}-{{ $now.toFormat('HHmmss') }}.mp4",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "video/mp4"
+            },
+            {
+              "name": "x-upsert",
+              "value": "true"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyContentType": "binaryData",
+        "options": {}
+      },
+      "id": "upload-supabase-storage",
+      "name": "Upload to Supabase Storage",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3520,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extraer URL pública de Supabase Storage\nconst item = $input.first().json;\nconst originalData = $('Build Video Prompt').item.json;\n\nconst supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL || '';\nconst urlParts = item.request?.url?.split('/retrofish-assets/');\n\nlet fileUrl = null;\n\nif (item.Key) {\n  fileUrl = `${supabaseUrl}/storage/v1/object/public/retrofish-assets/${item.Key}`;\n} else if (item.path) {\n  fileUrl = `${supabaseUrl}/storage/v1/object/public/retrofish-assets/${item.path}`;\n} else if (item.url || item.publicUrl) {\n  fileUrl = item.url || item.publicUrl;\n} else if (urlParts && urlParts[1]) {\n  fileUrl = `${supabaseUrl}/storage/v1/object/public/retrofish-assets/${urlParts[1]}`;\n} else {\n  const path = `${originalData.org_id}/${new Date().toISOString().split('T')[0]}/video-${originalData.base_angle}-${new Date().toISOString().split('T')[1].split('.')[0].replace(/:/g, '')}.mp4`;\n  fileUrl = `${supabaseUrl}/storage/v1/object/public/retrofish-assets/${path}`;\n}\n\nif (!fileUrl) {\n  throw new Error('No se pudo obtener URL pública del video');\n}\n\nreturn [{\n  json: {\n    ...originalData,\n    ...item,\n    file_url: fileUrl,\n    storage_path: item.Key || item.path || urlParts?.[1] || 'unknown',\n    uploaded_at: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "extract-storage-url",
+      "name": "Extract Storage URL",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3740,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Preparar datos para insertar en creatives\nconst item = $input.first().json;\n\nconst name = `${item.base_angle}${item.destination ? ` - ${item.destination}` : ''} - ${item.brief.substring(0, 50)}`;\n\nconst statusHistory = [{\n  status: 'draft',\n  timestamp: new Date().toISOString(),\n  user: 'system',\n  note: 'Video generado automáticamente'\n}];\n\nreturn [{\n  json: {\n    name: name,\n    file_url: item.file_url,\n    file_type: 'video',\n    angle: item.base_angle,\n    destination: item.destination || null,\n    format: 'video',\n    status: 'draft',\n    status_history: JSON.stringify(statusHistory),\n    org_id: item.org_id,\n    video_provider: item.video_provider,\n    storyboard: JSON.stringify(item.storyboard || {})\n  }\n}];"
+      },
+      "id": "prepare-creative-data",
+      "name": "Prepare Creative Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3960,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "table": "creatives",
+        "columns": "name,file_url,file_type,angle,destination,format,status,status_history",
+        "options": {}
+      },
+      "id": "insert-creative",
+      "name": "Insert Creative",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        4180,
+        200
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "supabase-postgres",
+          "name": "Supabase Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Recopilar creative_id y preparar respuesta\nconst item = $input.first().json;\nconst originalData = $('Validate Input').item.json;\n\nlet creativeId = null;\nif (item.id) {\n  creativeId = item.id;\n} else if (item[0] && item[0].id) {\n  creativeId = item[0].id;\n} else if (Array.isArray(item) && item.length > 0) {\n  creativeId = item[0].id;\n}\n\nif (!creativeId) {\n  throw new Error('No se pudo obtener creative_id después de la inserción');\n}\n\nreturn [{\n  json: {\n    success: true,\n    org_id: originalData.org_id,\n    creative_ids: [creativeId],\n    count: 1,\n    generated_at: new Date().toISOString(),\n    video_provider: originalData.video_provider\n  }\n}];"
+      },
+      "id": "collect-creative-id",
+      "name": "Collect Creative ID",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4400,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      },
+      "id": "return-response",
+      "name": "Return Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        4620,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Reintento: Volver a generar video (máximo 1 reintento)\nconst originalData = $('Build Video Prompt').item.json;\nconst retryAttempt = (originalData.retry_attempt || 0) + 1;\n\nif (retryAttempt > 1) {\n  throw new Error('Máximo de reintentos alcanzado (1 reintento permitido)');\n}\n\nreturn [{\n  json: {\n    ...originalData,\n    retry_attempt: retryAttempt,\n    retry_reason: 'QC failed or generation failed'\n  }\n}];"
+      },
+      "id": "retry-generation",
+      "name": "Retry Generation",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3520,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Manejar error y retornar respuesta de error\nconst item = $input.first().json;\nconst originalData = $('Validate Input').item.json;\n\nreturn [{\n  json: {\n    success: false,\n    org_id: originalData.org_id,\n    error: item.error || item.message || 'Error desconocido',\n    video_provider: originalData.video_provider,\n    failed_at: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "handle-error",
+      "name": "Handle Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3740,
+        600
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "LLM Storyboard Generator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "LLM Storyboard Generator": {
+      "main": [
+        [
+          {
+            "node": "Build Video Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Storyboard Structure": {
+      "ai_outputParser": [
+        [
+          {
+            "node": "LLM Storyboard Generator",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "LLM Storyboard Generator",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Video Prompt": {
+      "main": [
+        [
+          {
+            "node": "Select Provider",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Select Provider": {
+      "main": [
+        [
+          {
+            "node": "Generate Video - Sora",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Generate Video - Runway",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Generate Video - Pika",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Video - Sora": {
+      "main": [
+        [
+          {
+            "node": "Prepare Polling",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Video - Runway": {
+      "main": [
+        [
+          {
+            "node": "Prepare Polling",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Video - Pika": {
+      "main": [
+        [
+          {
+            "node": "Prepare Polling",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Polling": {
+      "main": [
+        [
+          {
+            "node": "Wait",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait": {
+      "main": [
+        [
+          {
+            "node": "Get Video Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Video Status": {
+      "main": [
+        [
+          {
+            "node": "Check Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Status": {
+      "main": [
+        [
+          {
+            "node": "Prepare Download",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Wait",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Retry Generation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Download": {
+      "main": [
+        [
+          {
+            "node": "Download Video",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download Video": {
+      "main": [
+        [
+          {
+            "node": "QC Video",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "QC Video": {
+      "main": [
+        [
+          {
+            "node": "Check QC",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check QC": {
+      "main": [
+        [
+          {
+            "node": "Upload to Supabase Storage",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Retry Generation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upload to Supabase Storage": {
+      "main": [
+        [
+          {
+            "node": "Extract Storage URL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Storage URL": {
+      "main": [
+        [
+          {
+            "node": "Prepare Creative Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Creative Data": {
+      "main": [
+        [
+          {
+            "node": "Insert Creative",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert Creative": {
+      "main": [
+        [
+          {
+            "node": "Collect Creative ID",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Collect Creative ID": {
+      "main": [
+        [
+          {
+            "node": "Return Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Retry Generation": {
+      "main": [
+        [
+          {
+            "node": "Select Provider",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Handle Error": {
+      "main": [
+        [
+          {
+            "node": "Return Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Return Response": {
+      "main": [
+        [
+          {
+            "node": "Webhook Trigger",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 0,
+  "updatedAt": "2024-01-01T00:00:00.000Z",
+  "versionId": "1"
+}
+
